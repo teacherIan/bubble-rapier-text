@@ -1,0 +1,64 @@
+{
+  "name": "bubble-rapier-text",
+  "version": "0.1.0",
+  "description": "Physics-driven \"Celebrate your hard work\" bubble text — PIXI bubble-letters on Rapier rigid bodies with hand-authored collision hulls, plus the interactive hull editor.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pixi",
+    "pixijs",
+    "rapier",
+    "physics",
+    "rigid-body",
+    "bubble-text",
+    "typography",
+    "celebrate",
+    "react"
+  ],
+  "sideEffects": [
+    "*.css",
+    "pixi.js/unsafe-eval"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./styles.css": "./src/styles.css",
+    "./package.json": "./package.json"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "OFL.txt"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "build:lib": "vite build --config vite.lib.config.ts",
+    "typecheck": "tsc -b"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.19.3",
+    "pixi.js": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7",
+    "vite-plugin-dts": "^4.5.4"
+  }
+}
