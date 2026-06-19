@@ -86,6 +86,9 @@ the hull data + helpers are plain functions:
 import {
   // framework-free sim — drive it from your own render loop
   createCelebrateWorld, stepCelebrate, solidifyLetter, exitCelebrate,
+  // re-layout: morph the live world into a NEW word — reuse matching glyphs, fling the rest
+  // off (scatterLetter), fly missing ones in (addLetter); removeWalls opens the edges first
+  removeWalls, retargetLetter, scatterLetter, addLetter,
   type LetterSpec, type CelebrateWorld,
   // glyph hulls
   GLYPH_HULLS, GLYPH_LIST, hullForGlyph, scaleHull, strokeHullPx,
@@ -94,7 +97,10 @@ import {
 } from 'bubble-rapier-text'
 ```
 
-See the public surface in [`src/index.ts`](src/index.ts).
+The self-assembly is robust: each letter frees itself from a wedge on its own schedule (it
+ghosts + gets a kick toward its slot when its placement score stalls), so a jittery neighbour
+can't trap it — including a thin glyph that settles on its side. See the public surface in
+[`src/index.ts`](src/index.ts).
 
 ---
 

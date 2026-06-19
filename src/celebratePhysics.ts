@@ -4,7 +4,7 @@
 // the world: per-letter slot/upright springs, the ghost-home untangle, and the
 // grab-point drag spring. State is a plain object so the worker can drive it.
 import type RAPIER from '@dimforge/rapier2d-compat'
-import { createPhysicsWorld, createWallCage } from '@/lib/physics/world'
+import { createPhysicsWorld, createWallCage, type WallCage } from '@/lib/physics/world'
 import type { PxShape } from './glyphHulls'
 
 // --- physics tuning (pixel units; world.lengthUnit = 100) ---
@@ -25,14 +25,17 @@ const WALL_T = 240
 const DRAG_STIFFNESS = 700 // = ω²: how hard the body chases so the grabbed point sits at the cursor
 const DRAG_DAMP = 50 // ≈critical velocity damping (snappy + stable, no buzz)
 const DRAG_ANG_DAMP = 30 // angular-velocity damping while dragging (calms contact-induced spin)
-// Untangle: when nothing is moving but a letter is still out of order, briefly GHOST
-// the worst one (collisions off) so the springs carry it home + upright through the
-// others, then re-solidify. STUCK_DIST/UNGHOST_DIST scale with the text (passed in).
-const QUIET_V = 55 // px/s — the worst letter below this counts as "parked" (a wedged letter
-// can jitter from neighbor contact, so this is well above 0 but below active settling speed)
+// Untangle: when a letter is out of place AND stops making progress toward its slot (wedged
+// against neighbours), briefly GHOST it (collisions off) so the springs carry it home +
+// upright through the others, then re-solidify. Tracked PER LETTER so a jittery neighbour
+// can't block a wedged one. STUCK_DIST/UNGHOST_DIST scale with the text (passed in).
+const SCORE_EPS = 0.08 // placement score must improve by this to count as "progressing" (jitter-tolerant)
 const STUCK_ANG = 0.4 // rad of tilt (~23°) beyond which a settled letter is "not upright"
 const UNGHOST_ANG = 0.2 // re-solidify only once well under STUCK_ANG, so it can't churn
-const STUCK_FRAMES = 45 // ~0.75s of parked-but-wrong before we act
+const SETTLE_V = 90 // px/s — a ghosting letter must be this slow (plus home + upright) to re-solidify
+const STUCK_FRAMES = 45 // ~0.75s of stalled-but-wrong before we free a letter
+const FREE_KICK = 320 // px/s shove toward the slot when freeing a wedged letter (springs alone are too weak)
+const FREE_SPIN = 9 // rad/s spin toward upright when freeing a wedged (e.g. flat-lying oval) letter
 const WALL_DELAY_MS = 2800 // add the enclosure after the entrance — letters fly in from OUTSIDE
 const SPAWN_MARGIN = 120 // how far outside the screen edge letters spawn
 // The slot-spring is linear (force ∝ distance), so a letter spawned far off-screen would be
@@ -55,6 +58,11 @@ interface LetterBody {
   tx: number
   ty: number
   ghost: boolean // true while gliding home with collisions disabled
+  discarded: boolean // true once flung off in a transition — no springs, just flies under gravity
+  mass: number // cached: constant for a fixed collider set (verified: disabling colliders doesn't change it)
+  inertia: number // cached principal moment of inertia — avoids per-frame WASM calls in the springs
+  wrongFrames: number // consecutive frames out-of-place AND not improving its best score
+  bestScore: number // best (min) placement score (position+tilt) since last placed/retargeted — jitter-proof
 }
 
 export interface DragState {
@@ -73,10 +81,10 @@ export interface CelebrateWorld {
   h: number
   stuckDist: number
   unghostDist: number
-  quietStuckFrames: number
   elapsedMs: number
   wallsAdded: boolean
   floorBody: RAPIER.RigidBody | null // the bottom wall, removed on exit so letters fall off-screen
+  walls: RAPIER.RigidBody[] // all four enclosure walls — removed wholesale on a word-to-word transition
   exiting: boolean // true once dropping off-screen (springs off, floor removed) — the /celebrate Start exit
   drag: DragState | null
 }
@@ -103,11 +111,11 @@ function spawnPose(w: number, h: number): { x: number; y: number; rot: number } 
 // The screen enclosure (floor, walls, ceiling), added once after the entrance so the
 // untangle/drag can't fling a letter off-screen. Returns the FLOOR body so the exit can
 // remove it and let the letters fall out the bottom.
-function addEnclosure(rapier: typeof RAPIER, world: RAPIER.World, w: number, h: number): RAPIER.RigidBody {
-  // Full-height side walls, no friction — the celebrate enclosure. The shared helper
-  // returns the floor (bottom wall) so the exit can remove it and let the letters fall
-  // out the bottom.
-  return createWallCage(rapier, world, w, h, { thickness: WALL_T, sideExtent: 'full' }).floor
+function addEnclosure(rapier: typeof RAPIER, world: RAPIER.World, w: number, h: number): WallCage {
+  // Full-height side walls, no friction — the celebrate enclosure. Returns the whole cage:
+  // the exit removes just the floor (letters fall out the bottom); a re-layout transition
+  // removes every wall (letters scatter off all edges).
+  return createWallCage(rapier, world, w, h, { thickness: WALL_T, sideExtent: 'full' })
 }
 
 function setLetterSolid(L: LetterBody, solid: boolean): void {
@@ -155,6 +163,42 @@ function colliderDescFor(rapier: typeof RAPIER, c: PxShape): RAPIER.ColliderDesc
   }
 }
 
+// Build one letter rigid body (spawned just outside a random edge) with its hand-authored
+// compound of curved colliders tracing the glyph (see glyphHulls.ts): ball, capsule,
+// roundCuboid (rounded rect), and oval (a roundConvexHull of points on the ellipse). All
+// are corner-free, so packed letters slide instead of wedging. Each piece is positioned +
+// rotated relative to the body centre. Empty hull (shouldn't happen — hullForGlyph
+// guarantees ≥1) falls back to a ball. Shared by world creation and runtime spawns.
+function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: LetterSpec, w: number, h: number): LetterBody {
+  const pose = spawnPose(w, h)
+  const body = world.createRigidBody(
+    rapier.RigidBodyDesc.dynamic()
+      .setTranslation(pose.x, pose.y)
+      .setRotation(pose.rot)
+      .setLinearDamping(LINEAR_DAMPING)
+      .setAngularDamping(ANGULAR_DAMPING)
+      .setCcdEnabled(true), // small fast glyphs were tunneling through the floor on entry
+  )
+  const pieces = spec.colliders.length
+    ? spec.colliders
+    : [{ t: 'ball' as const, x: 0, y: 0, r: Math.min(spec.hw, spec.hh) }]
+  for (const c of pieces) {
+    const desc = colliderDescFor(rapier, c)
+    if (desc) world.createCollider(desc.setTranslation(c.x, c.y).setRotation(shapeRot(c)).setRestitution(RESTITUTION).setDensity(1), body)
+  }
+  return {
+    body,
+    tx: spec.slotX,
+    ty: spec.slotY,
+    ghost: false,
+    discarded: false,
+    mass: body.mass(),
+    inertia: body.principalInertia(),
+    wrongFrames: 0,
+    bestScore: Infinity,
+  }
+}
+
 export async function createCelebrateWorld(
   specs: LetterSpec[],
   w: number,
@@ -167,32 +211,63 @@ export async function createCelebrateWorld(
   // entrance (see stepCelebrate).
   const { rapier, world } = await createPhysicsWorld({ x: 0, y: GRAVITY })
 
-  const letters: LetterBody[] = specs.map((spec) => {
-    const pose = spawnPose(w, h)
-    const body = world.createRigidBody(
-      rapier.RigidBodyDesc.dynamic()
-        .setTranslation(pose.x, pose.y)
-        .setRotation(pose.rot)
-        .setLinearDamping(LINEAR_DAMPING)
-        .setAngularDamping(ANGULAR_DAMPING)
-        .setCcdEnabled(true), // small fast glyphs were tunneling through the floor on entry
-    )
-    // Hand-authored compound of curved colliders tracing the glyph (see glyphHulls.ts):
-    // ball, capsule, roundCuboid (rounded rect), and oval (a roundConvexHull of points on
-    // the ellipse). All are corner-free, so packed letters slide instead of wedging. Each
-    // is positioned + rotated relative to the body centre. Empty hull (shouldn't happen —
-    // hullForGlyph guarantees ≥1) falls back to a ball.
-    const pieces = spec.colliders.length
-      ? spec.colliders
-      : [{ t: 'ball' as const, x: 0, y: 0, r: Math.min(spec.hw, spec.hh) }]
-    for (const c of pieces) {
-      const desc = colliderDescFor(rapier, c)
-      if (desc) world.createCollider(desc.setTranslation(c.x, c.y).setRotation(shapeRot(c)).setRestitution(RESTITUTION).setDensity(1), body)
-    }
-    return { body, tx: spec.slotX, ty: spec.slotY, ghost: false }
-  })
+  const letters: LetterBody[] = specs.map((spec) => createLetterBody(rapier, world, spec, w, h))
 
-  return { rapier, world, letters, w, h, stuckDist, unghostDist, quietStuckFrames: 0, elapsedMs: 0, wallsAdded: false, floorBody: null, exiting: false, drag: null }
+  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, floorBody: null, walls: [], exiting: false, drag: null }
+}
+
+// ── Transition primitives (re-layout to a new phrase) ───────────────────────────────────
+// A transition reuses the live world: matching letters glide to NEW slots, the rest are
+// flung off, and missing letters fly in. The render layer keeps its renderLetters[] array
+// index-aligned with world.letters[] by mirroring addLetter(). All letters stay SOLID —
+// disabling colliders zeroes the body mass, which kills both gravity (a flung letter would
+// hang) and the mass-scaled slot spring (a spawned letter wouldn't move). Instead the
+// caller removes the whole wall cage (removeWalls) so flung letters exit off any edge and
+// spawned letters fly in unobstructed.
+
+/** Remove the entire enclosure so the world is open on all sides (for a re-layout transition). */
+export function removeWalls(state: CelebrateWorld): void {
+  for (const wall of state.walls) state.world.removeRigidBody(wall)
+  state.walls = []
+  state.floorBody = null
+  state.wallsAdded = true // keep stepCelebrate from re-adding the cage
+}
+
+/** Point an existing letter at a new slot; the slot spring carries it there. */
+export function retargetLetter(state: CelebrateWorld, index: number, x: number, y: number): void {
+  const L = state.letters[index]
+  if (!L) return
+  L.tx = x
+  L.ty = y
+  L.discarded = false
+  L.wrongFrames = 0
+  L.bestScore = Infinity // re-arm stuck detection against the new slot
+  setLetterSolid(L, true) // ensure solid (it may have been mid-ghost from the untangle)
+}
+
+/** Fling a letter off-screen: kill its homing spring (discarded) and give it a strong random
+ *  velocity + spin. GHOST it (collisions off — mass is retained, so gravity still applies) so
+ *  it can't get caught in the re-forming text and propped up on-screen; it arcs off through the
+ *  open edges (walls removed) and is then culled. */
+export function scatterLetter(state: CelebrateWorld, index: number): void {
+  const L = state.letters[index]
+  if (!L) return
+  L.discarded = true
+  setLetterSolid(L, false) // ghost: pass through everything so it always reaches an open edge
+  L.body.enableCcd(false) // no longer needs continuous collision — it's leaving the screen
+  L.body.setLinearDamping(0) // 0 so gravity keeps accelerating it off-screen (it won't slow + sleep mid-air)
+  const ang = Math.random() * Math.PI * 2
+  const speed = 700 + Math.random() * 700
+  L.body.setLinvel({ x: Math.cos(ang) * speed, y: Math.sin(ang) * speed - 220 }, true) // slight up-bias → flies up, then gravity wins
+  L.body.setAngvel((Math.random() - 0.5) * 2 * MAX_SPIN, true)
+}
+
+/** Spawn a new letter into the running world (flies in from an edge toward its slot).
+ *  Returns its index — the render layer must push a matching renderLetter at the same index. */
+export function addLetter(state: CelebrateWorld, spec: LetterSpec): number {
+  const L = createLetterBody(state.rapier, state.world, spec, state.w, state.h)
+  state.letters.push(L)
+  return state.letters.length - 1
 }
 
 /** Make a dragged letter solid again (called when a ghosting letter is grabbed). */
@@ -244,55 +319,64 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
 
   state.elapsedMs += dt * 1000
   if (!state.wallsAdded && state.elapsedMs >= WALL_DELAY_MS) {
-    state.floorBody = addEnclosure(rapier, world, state.w, state.h) // letters have flown in; now contain them
+    const cage = addEnclosure(rapier, world, state.w, state.h) // letters have flown in; now contain them
+    state.floorBody = cage.floor
+    state.walls = cage.walls
     state.wallsAdded = true
   }
 
   const draggedIndex = state.drag ? state.drag.index : -1
-  const wrongSlow: LetterBody[] = [] // out-of-order + parked letters, ghosted together on trigger
-  let worst: LetterBody | null = null
-  let worstScore = 1 // only letters past the thresholds (score > 1) count
-  let worstV = 0 // the worst letter's OWN speed (not the whole system's)
   for (let i = 0; i < letters.length; i++) {
     if (i === draggedIndex) continue // driven by the drag spring below
     const L = letters[i]
+    if (L.discarded) continue // flung off in a transition — no spring/untangle, just flies under gravity
     const p = L.body.translation()
-    // A ghosting letter has arrived once it's home and upright → make it solid again.
-    if (L.ghost) {
-      const ga = Math.atan2(Math.sin(L.body.rotation()), Math.cos(L.body.rotation()))
-      if (Math.hypot(L.tx - p.x, L.ty - p.y) < state.unghostDist && Math.abs(ga) < UNGHOST_ANG) setLetterSolid(L, true)
-    }
-    const m = L.body.mass()
-    // Linear spring is mass-normalized (impulse/m = accel). Angular spring must be
-    // INERTIA-normalized: applyTorqueImpulse divides by the moment of inertia, so
-    // multiply by principalInertia() for a consistent ω² across glyph sizes.
-    L.body.applyImpulse({ x: (L.tx - p.x) * SLOT_SPRING * dt * m, y: (L.ty - p.y) * SLOT_SPRING * dt * m }, true)
+    const dist = Math.hypot(L.tx - p.x, L.ty - p.y)
     const ang = Math.atan2(Math.sin(L.body.rotation()), Math.cos(L.body.rotation()))
-    L.body.applyTorqueImpulse(-ang * ANG_SPRING * dt * L.body.principalInertia(), true)
-    if (L.ghost) continue // already being resolved; don't also pick it as worst
-    const score = Math.max(Math.hypot(L.tx - p.x, L.ty - p.y) / state.stuckDist, Math.abs(ang) / STUCK_ANG)
-    if (score <= 1) continue // in place + upright
     const v = L.body.linvel()
     const speed = Math.hypot(v.x, v.y)
-    if (speed < QUIET_V) wrongSlow.push(L) // out of order AND parked
-    if (score > worstScore) {
-      worstScore = score
-      worst = L
-      worstV = speed
+    // A ghosting letter has arrived once it's home, upright, AND nearly stopped → solidify.
+    // The speed gate matters: solidifying while it's still drifting lets a neighbour shove the
+    // thin oval back out before it settles. Ghosted it can't collide, so it always reaches this.
+    if (L.ghost && dist < state.unghostDist && Math.abs(ang) < UNGHOST_ANG && speed < SETTLE_V) {
+      setLetterSolid(L, true)
+      L.wrongFrames = 0
+      L.bestScore = Infinity
     }
-  }
+    // Slot + upright springs, using CACHED mass/inertia (constant per glyph) instead of 3
+    // WASM calls/frame. Linear spring is mass-normalized (impulse/m = accel); the angular
+    // spring is inertia-normalized so ω² is consistent across glyph sizes.
+    L.body.applyImpulse({ x: (L.tx - p.x) * SLOT_SPRING * dt * L.mass, y: (L.ty - p.y) * SLOT_SPRING * dt * L.mass }, true)
+    L.body.applyTorqueImpulse(-ang * ANG_SPRING * dt * L.inertia, true)
+    if (L.ghost) continue // already gliding home — don't also run stuck detection
 
-  // When the worst-placed letter has itself stopped moving but is still out of order,
-  // ghost EVERY wrong-and-parked letter at once — they glide home + upright through
-  // each other, then re-solidify (above). Doing the whole set (not just the worst)
-  // breaks mutual wedges: two letters tangled together can't each keep re-breaking the
-  // other. Gating on the WORST letter's own speed (not global quiescence) means one
-  // jittery neighbor — common on tight/small layouts — can't block the untangle forever.
-  if (!state.drag && worst && worstV < QUIET_V) state.quietStuckFrames++
-  else state.quietStuckFrames = 0
-  if (state.quietStuckFrames > STUCK_FRAMES) {
-    for (const L of wrongSlow) setLetterSolid(L, false)
-    state.quietStuckFrames = 0
+    // Per-letter untangle: SCORE combines position AND tilt (max of the two, 1 = the threshold).
+    // A letter whose score doesn't IMPROVE by SCORE_EPS for STUCK_FRAMES is wedged → free it:
+    // ghost it (pass through neighbours) + kick it (velocity toward the slot, spin toward upright).
+    // Springs alone can't pop a wedge — e.g. a flat-lying oval 'i' pinned between 't' and 'e'.
+    // Scoring on TILT too is the fix for "tries once then gives up": a letter sitting at the right
+    // spot but rotated has a stable distance, so a distance-only metric saw no problem and never
+    // re-fired — score catches the tilt. Gating on BEST (min) score is jitter-proof, and we re-arm
+    // each cycle so it keeps trying until it's genuinely upright + home.
+    const score = Math.max(dist / state.stuckDist, Math.abs(ang) / STUCK_ANG)
+    if (score <= 1) {
+      L.wrongFrames = 0
+      L.bestScore = Infinity // settled: re-arm so a later knock starts fresh
+      continue
+    }
+    if (score < L.bestScore - SCORE_EPS) {
+      L.bestScore = score // still making real headway (closer OR more upright)
+      L.wrongFrames = 0
+    } else if (!state.drag && ++L.wrongFrames > STUCK_FRAMES) {
+      setLetterSolid(L, false) // ghost: pass through neighbours
+      const dx = L.tx - p.x
+      const dy = L.ty - p.y
+      const d = Math.hypot(dx, dy) || 1
+      L.body.setLinvel({ x: (dx / d) * FREE_KICK, y: (dy / d) * FREE_KICK }, true) // shove toward home
+      L.body.setAngvel(ang > 0 ? -FREE_SPIN : FREE_SPIN, true) // spin toward upright
+      L.wrongFrames = 0
+      L.bestScore = Infinity
+    }
   }
 
   // Drag: a damped spring on the body CENTRE whose target is (cursor − grabOffset), so the
@@ -311,17 +395,18 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
       const tx = state.drag.cursorX - rx // where the CENTRE must be for the grabbed point to sit at the cursor
       const ty = state.drag.cursorY - ry
       const lv = b.linvel()
-      const m = b.mass()
       const fx = (tx - p.x) * DRAG_STIFFNESS - lv.x * DRAG_DAMP
       const fy = (ty - p.y) * DRAG_STIFFNESS - lv.y * DRAG_DAMP
-      b.applyImpulse({ x: fx * dt * m, y: fy * dt * m }, true) // at the centre → no torque
-      b.applyTorqueImpulse(-b.angvel() * DRAG_ANG_DAMP * dt * b.principalInertia(), true)
+      b.applyImpulse({ x: fx * dt * L.mass, y: fy * dt * L.mass }, true) // at the centre → no torque
+      b.applyTorqueImpulse(-b.angvel() * DRAG_ANG_DAMP * dt * L.inertia, true)
     }
   }
 
   // Cap speeds so the solver always sees resolvable motion (the linear spring would
-  // otherwise fling far-spawned letters too fast for contacts to keep up).
+  // otherwise fling far-spawned letters too fast for contacts to keep up). Discarded letters
+  // are skipped — they're meant to fly off fast and get culled once off-screen.
   for (const L of letters) {
+    if (L.discarded) continue
     const v = L.body.linvel()
     const sp = Math.hypot(v.x, v.y)
     if (sp > MAX_SPEED) L.body.setLinvel({ x: (v.x / sp) * MAX_SPEED, y: (v.y / sp) * MAX_SPEED }, true)

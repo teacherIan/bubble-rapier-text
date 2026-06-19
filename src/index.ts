@@ -20,6 +20,12 @@ export {
   stepCelebrate,
   solidifyLetter,
   exitCelebrate,
+  // re-layout primitives: morph the live world into a new word (reuse matching glyphs,
+  // fling the rest off, fly missing ones in)
+  removeWalls,
+  retargetLetter,
+  scatterLetter,
+  addLetter,
   GRAVITY,
   type LetterSpec,
   type CelebrateWorld,
