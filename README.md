@@ -89,6 +89,7 @@ import {
   // re-layout: morph the live world into a NEW word — reuse matching glyphs, fling the rest
   // off (scatterLetter), fly missing ones in (addLetter); removeWalls opens the edges first
   removeWalls, retargetLetter, scatterLetter, addLetter,
+  resizeWorld, // resize + rebuild the enclosure on a viewport / device-rotation change
   type LetterSpec, type CelebrateWorld,
   // glyph hulls
   GLYPH_HULLS, GLYPH_LIST, hullForGlyph, scaleHull, strokeHullPx,

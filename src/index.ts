@@ -26,6 +26,7 @@ export {
   retargetLetter,
   scatterLetter,
   addLetter,
+  resizeWorld, // resize the world + rebuild the enclosure on a viewport / device-rotation change
   GRAVITY,
   type LetterSpec,
   type CelebrateWorld,

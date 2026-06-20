@@ -13,7 +13,10 @@ const SLOT_SPRING = 150 // = ω²: pull toward the target slot (mass-normalized 
 const ANG_SPRING = 80 // = ω²: torque toward upright (INERTIA-normalized — see step)
 const LINEAR_DAMPING = 3.0 // settle without endless overshoot (underdamped = bouncy)
 const ANGULAR_DAMPING = 11 // ζ≈0.6 vs ANG_SPRING: letters stand up cleanly, slight wobble
-const RESTITUTION = 0.3 // letter-vs-letter bounce
+const RESTITUTION = 0.15 // letter-vs-letter bounce — kept low so contacts dissipate (a bouncier value
+// keeps punting pinned letters around and feeds the wedge; the entrance still reads bouncy because
+// that comes from gravity + LINEAR_DAMPING, not restitution).
+const SOLVER_ITERATIONS = 8 // > the default 4: fewer residual penetrations in the packed pile = fewer wedges at the source
 const WALL_T = 240
 // Drag spring. Anchoring it at the GRABBED point (a penalty "mouse joint") drove a runaway
 // orbit/spin about an off-centre grab — the body whirled at ~13 rad/s and no amount of
@@ -25,17 +28,21 @@ const WALL_T = 240
 const DRAG_STIFFNESS = 700 // = ω²: how hard the body chases so the grabbed point sits at the cursor
 const DRAG_DAMP = 50 // ≈critical velocity damping (snappy + stable, no buzz)
 const DRAG_ANG_DAMP = 30 // angular-velocity damping while dragging (calms contact-induced spin)
-// Untangle: when a letter is out of place AND stops making progress toward its slot (wedged
-// against neighbours), briefly GHOST it (collisions off) so the springs carry it home +
-// upright through the others, then re-solidify. Tracked PER LETTER so a jittery neighbour
-// can't block a wedged one. STUCK_DIST/UNGHOST_DIST scale with the text (passed in).
+// Untangle: a letter that's out of place AND stops making progress toward its slot is wedged
+// against its neighbours. We free it by GHOSTING it (collisions off) and then DRIVING it home —
+// directly lerping its pose to slot + upright each frame so it glides through its neighbours and
+// converges by construction. (Why drive, not spring? A collider-disabled body has inert mass
+// properties, so applyImpulse/applyTorqueImpulse do NOTHING to a ghost — the springs can't right
+// it. Verified live: a ghosted, tilted letter never stands up under the angular spring alone.
+// The old one-shot FREE_KICK/FREE_SPIN was a hopeful ballistic shove that often left a flat-lying
+// oval tilted forever.) Tracked PER LETTER (a jittery neighbour can't block a wedged one); the
+// no-progress gate fires at ANY speed, so a letter batted around by contacts is still caught.
+// STUCK_DIST/UNGHOST_DIST scale with the text (passed in).
 const SCORE_EPS = 0.08 // placement score must improve by this to count as "progressing" (jitter-tolerant)
 const STUCK_ANG = 0.4 // rad of tilt (~23°) beyond which a settled letter is "not upright"
-const UNGHOST_ANG = 0.2 // re-solidify only once well under STUCK_ANG, so it can't churn
-const SETTLE_V = 90 // px/s — a ghosting letter must be this slow (plus home + upright) to re-solidify
+const UNGHOST_ANG = 0.2 // re-solidify a gliding letter only once well under STUCK_ANG
 const STUCK_FRAMES = 45 // ~0.75s of stalled-but-wrong before we free a letter
-const FREE_KICK = 320 // px/s shove toward the slot when freeing a wedged letter (springs alone are too weak)
-const FREE_SPIN = 9 // rad/s spin toward upright when freeing a wedged (e.g. flat-lying oval) letter
+const GLIDE_K = 0.2 // per-frame pose lerp while gliding home — converges smoothly in ~12 frames
 const WALL_DELAY_MS = 2800 // add the enclosure after the entrance — letters fly in from OUTSIDE
 const SPAWN_MARGIN = 120 // how far outside the screen edge letters spawn
 // The slot-spring is linear (force ∝ distance), so a letter spawned far off-screen would be
@@ -123,6 +130,16 @@ function setLetterSolid(L: LetterBody, solid: boolean): void {
   L.ghost = !solid
 }
 
+// Free a wedged letter: ghost it (collisions off) and stop it dead, so the per-frame glide in
+// stepCelebrate can drive it cleanly home from rest. Resets the stuck counters.
+function freeLetter(L: LetterBody): void {
+  setLetterSolid(L, false)
+  L.body.setLinvel({ x: 0, y: 0 }, true)
+  L.body.setAngvel(0, true)
+  L.wrongFrames = 0
+  L.bestScore = Infinity
+}
+
 const OVAL_SAMPLES = 24 // points sampled on the ellipse for the roundConvexHull oval
 
 // Collider rotation relative to the body: balls are rotation-invariant, everything else
@@ -177,6 +194,8 @@ function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: Lett
       .setRotation(pose.rot)
       .setLinearDamping(LINEAR_DAMPING)
       .setAngularDamping(ANGULAR_DAMPING)
+      .setCanSleep(false) // these bodies are perpetually servoed to a slot — a sleeping wrong letter
+      // (Rapier sleeps below ~0.4·lengthUnit = 40px/s) would never be re-homed; never let them sleep.
       .setCcdEnabled(true), // small fast glyphs were tunneling through the floor on entry
   )
   const pieces = spec.colliders.length
@@ -209,7 +228,7 @@ export async function createCelebrateWorld(
   // lengthUnit=100 (px-space; the shared default — see createPhysicsWorld). No enclosure
   // yet — letters spawn OUTSIDE the edges and fly in; addEnclosure() runs after the
   // entrance (see stepCelebrate).
-  const { rapier, world } = await createPhysicsWorld({ x: 0, y: GRAVITY })
+  const { rapier, world } = await createPhysicsWorld({ x: 0, y: GRAVITY }, { numSolverIterations: SOLVER_ITERATIONS })
 
   const letters: LetterBody[] = specs.map((spec) => createLetterBody(rapier, world, spec, w, h))
 
@@ -224,6 +243,25 @@ export async function createCelebrateWorld(
 // hang) and the mass-scaled slot spring (a spawned letter wouldn't move). Instead the
 // caller removes the whole wall cage (removeWalls) so flung letters exit off any edge and
 // spawned letters fly in unobstructed.
+
+/** Resize the world to a new viewport: update the stored dims + untangle thresholds, and rebuild
+ *  the enclosure at the new size IF it's currently up (so the walls track the viewport on a device
+ *  rotation / mobile URL-bar change). If the cage isn't up yet (mid-entrance) or was removed (a
+ *  re-layout transition / exit), it's left alone — stepCelebrate adds it later at the then-current
+ *  size. The render layer is responsible for recomputing slot targets (retargetLetter) for the new
+ *  dimensions and resizing its own canvas. */
+export function resizeWorld(state: CelebrateWorld, w: number, h: number, stuckDist: number, unghostDist: number): void {
+  state.w = w
+  state.h = h
+  state.stuckDist = stuckDist
+  state.unghostDist = unghostDist
+  if (state.walls.length) {
+    for (const wall of state.walls) state.world.removeRigidBody(wall)
+    const cage = createWallCage(state.rapier, state.world, w, h, { thickness: WALL_T, sideExtent: 'full' })
+    state.floorBody = cage.floor
+    state.walls = cage.walls
+  }
+}
 
 /** Remove the entire enclosure so the world is open on all sides (for a re-layout transition). */
 export function removeWalls(state: CelebrateWorld): void {
@@ -333,31 +371,38 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
     const p = L.body.translation()
     const dist = Math.hypot(L.tx - p.x, L.ty - p.y)
     const ang = Math.atan2(Math.sin(L.body.rotation()), Math.cos(L.body.rotation()))
-    const v = L.body.linvel()
-    const speed = Math.hypot(v.x, v.y)
-    // A ghosting letter has arrived once it's home, upright, AND nearly stopped → solidify.
-    // The speed gate matters: solidifying while it's still drifting lets a neighbour shove the
-    // thin oval back out before it settles. Ghosted it can't collide, so it always reaches this.
-    if (L.ghost && dist < state.unghostDist && Math.abs(ang) < UNGHOST_ANG && speed < SETTLE_V) {
-      setLetterSolid(L, true)
-      L.wrongFrames = 0
-      L.bestScore = Infinity
+
+    // ── Gliding home (ghost) ─────────────────────────────────────────────────────────────
+    // A freed letter is DRIVEN, not sprung: lerp its pose straight to slot + upright each frame
+    // (it passes through neighbours, colliders disabled) so it converges by construction, and it
+    // re-solidifies the moment it's home AND upright. Because the glide arrives it at rest, that
+    // gate is met cleanly — no overshoot, no shove-back. (The springs CANNOT right a ghost: a
+    // collider-disabled body's mass props are inert, so impulses do nothing.)
+    if (L.ghost) {
+      if (dist < state.unghostDist && Math.abs(ang) < UNGHOST_ANG) {
+        setLetterSolid(L, true) // arrived — hand back to the springs (falls through below)
+        L.wrongFrames = 0
+        L.bestScore = Infinity
+      } else {
+        L.body.setTranslation({ x: p.x + (L.tx - p.x) * GLIDE_K, y: p.y + (L.ty - p.y) * GLIDE_K }, true)
+        L.body.setRotation(ang * (1 - GLIDE_K), true)
+        L.body.setLinvel({ x: 0, y: 0 }, true) // arrive calm so the un-ghost gate above passes
+        L.body.setAngvel(0, true)
+        continue
+      }
     }
-    // Slot + upright springs, using CACHED mass/inertia (constant per glyph) instead of 3
-    // WASM calls/frame. Linear spring is mass-normalized (impulse/m = accel); the angular
+
+    // Slot + upright springs (solid letters), using CACHED mass/inertia (constant per glyph) instead
+    // of 3 WASM calls/frame. Linear spring is mass-normalized (impulse/m = accel); the angular
     // spring is inertia-normalized so ω² is consistent across glyph sizes.
     L.body.applyImpulse({ x: (L.tx - p.x) * SLOT_SPRING * dt * L.mass, y: (L.ty - p.y) * SLOT_SPRING * dt * L.mass }, true)
     L.body.applyTorqueImpulse(-ang * ANG_SPRING * dt * L.inertia, true)
-    if (L.ghost) continue // already gliding home — don't also run stuck detection
 
-    // Per-letter untangle: SCORE combines position AND tilt (max of the two, 1 = the threshold).
-    // A letter whose score doesn't IMPROVE by SCORE_EPS for STUCK_FRAMES is wedged → free it:
-    // ghost it (pass through neighbours) + kick it (velocity toward the slot, spin toward upright).
-    // Springs alone can't pop a wedge — e.g. a flat-lying oval 'i' pinned between 't' and 'e'.
-    // Scoring on TILT too is the fix for "tries once then gives up": a letter sitting at the right
-    // spot but rotated has a stable distance, so a distance-only metric saw no problem and never
-    // re-fired — score catches the tilt. Gating on BEST (min) score is jitter-proof, and we re-arm
-    // each cycle so it keeps trying until it's genuinely upright + home.
+    // Per-letter untangle: SCORE combines position AND tilt (max of the two, 1 = the threshold), so
+    // a letter at the right spot but ROTATED (a flat-lying oval) still reads as wrong. A letter whose
+    // score doesn't IMPROVE by SCORE_EPS for STUCK_FRAMES is wedged → free it to glide home. Gating on
+    // BEST (min) score is jitter-proof AND fires at any speed, so a letter batted around by contacts
+    // (never parking) is still caught; we re-arm each cycle so it keeps trying until home + upright.
     const score = Math.max(dist / state.stuckDist, Math.abs(ang) / STUCK_ANG)
     if (score <= 1) {
       L.wrongFrames = 0
@@ -368,14 +413,7 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
       L.bestScore = score // still making real headway (closer OR more upright)
       L.wrongFrames = 0
     } else if (!state.drag && ++L.wrongFrames > STUCK_FRAMES) {
-      setLetterSolid(L, false) // ghost: pass through neighbours
-      const dx = L.tx - p.x
-      const dy = L.ty - p.y
-      const d = Math.hypot(dx, dy) || 1
-      L.body.setLinvel({ x: (dx / d) * FREE_KICK, y: (dy / d) * FREE_KICK }, true) // shove toward home
-      L.body.setAngvel(ang > 0 ? -FREE_SPIN : FREE_SPIN, true) // spin toward upright
-      L.wrongFrames = 0
-      L.bestScore = Infinity
+      freeLetter(L) // ghost + stop; the glide above drives it home next frame
     }
   }
 
