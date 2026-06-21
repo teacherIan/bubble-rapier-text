@@ -119,8 +119,26 @@ function addEnclosure(rapier: typeof RAPIER, world: RAPIER.World, w: number, h: 
 }
 
 function setLetterSolid(L: LetterBody, solid: boolean): void {
-  for (let i = 0; i < L.body.numColliders(); i++) L.body.collider(i).setEnabled(solid)
+  for (let i = 0; i < L.body.numColliders(); i++) {
+    const c = L.body.collider(i)
+    c.setEnabled(solid)
+    if (solid) c.setCollisionGroups(0xffffffff) // restore default (a scatter may have set it to pass-through)
+  }
   L.ghost = !solid
+}
+
+// Ghost a FLUNG (discarded) letter by making it pass through everything via collision GROUPS, WITHOUT
+// disabling its collider. Disabling the collider zeroes the body's effective mass — and a zero-mass
+// dynamic body gets NO gravity and its velocity decays to zero, so the letter freezes on-screen instead
+// of flying off (verified against Rapier 0.19). Keeping the collider enabled (filtered to hit nothing)
+// retains the mass, so gravity + the scatter velocity carry it cleanly off any edge to be culled.
+function setLetterPassthrough(L: LetterBody): void {
+  for (let i = 0; i < L.body.numColliders(); i++) {
+    const c = L.body.collider(i)
+    c.setEnabled(true)
+    c.setCollisionGroups(0) // membership 0 + filter 0 → collides with nothing
+  }
+  L.ghost = true
 }
 
 const OVAL_SAMPLES = 24 // points sampled on the ellipse for the roundConvexHull oval
@@ -245,15 +263,15 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
   setLetterSolid(L, true) // ensure solid (it may have been mid-ghost from the untangle)
 }
 
-/** Fling a letter off-screen: kill its homing spring (discarded) and give it a strong random
- *  velocity + spin. GHOST it (collisions off — mass is retained, so gravity still applies) so
- *  it can't get caught in the re-forming text and propped up on-screen; it arcs off through the
- *  open edges (walls removed) and is then culled. */
+/** Fling a letter off-screen: kill its homing spring (discarded) and give it a strong random velocity
+ *  + spin. Make it pass through everything (so it can't get caught in the re-forming text) but KEEP its
+ *  collider enabled — see setLetterPassthrough: disabling the collider zeroes the mass, which kills
+ *  gravity and lets the velocity decay to zero, freezing the letter on-screen instead of arcing off. */
 export function scatterLetter(state: CelebrateWorld, index: number): void {
   const L = state.letters[index]
   if (!L) return
   L.discarded = true
-  setLetterSolid(L, false) // ghost: pass through everything so it always reaches an open edge
+  setLetterPassthrough(L) // collide with nothing, BUT keep mass → gravity still pulls it off-screen
   L.body.enableCcd(false) // no longer needs continuous collision — it's leaving the screen
   L.body.setLinearDamping(0) // 0 so gravity keeps accelerating it off-screen (it won't slow + sleep mid-air)
   const ang = Math.random() * Math.PI * 2
