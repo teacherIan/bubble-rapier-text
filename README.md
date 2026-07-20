@@ -74,10 +74,11 @@ registration and `instanceof` checks that fail across the boundary.
 
 ### `<CelebrateBubbles>` props
 
-All optional. The scene is built **once** on mount, so most props are read from the first render
-and changing them later does nothing — remount with a different React `key` to apply a change. (In
-dev the component warns when you change one of the frozen props.) Only `exiting` and `play` are
-live.
+All optional. **`phrase`, `layout`, `exiting`, and `play` are LIVE** — change `phrase` (or
+`layout`) and the current word *morphs* into the new one: matching glyphs glide across, the rest
+scatter off, and missing letters fly in. The rest (`hulls`, `palette`, `frame`, `position`, …) are
+read once at mount; changing them later does nothing (the component warns in dev). Remount with a
+different React `key` to change those.
 
 | Prop          | Type                      | Default   | What it does |
 | ------------- | ------------------------- | --------- | ------------ |
@@ -86,10 +87,10 @@ live.
 | `transparent` | `boolean`                 | `false`   | Drop the gradient backdrop so whatever's behind shows through. |
 | `frame`       | `boolean`                 | `false`   | Push the lines to the top and bottom edges so they *frame* a central element instead of sitting over the middle. |
 | `play`        | `boolean`                 | `true`    | **Live.** Hold the letters at their spawn edges until `true`, so a host can finish its own intro first. Latches once released. |
-| `phrase`      | `Line[] \| (vw) => Line[]` | the demo phrase | What to set. `Line` is `{ text, weight? }`; `weight` scales that line relative to the others. A function of viewport width lets you restructure on a phone. |
+| `phrase`      | `Line[] \| (vw) => Line[]` | the demo phrase | **Live.** The words to set. `Line` is `{ text, weight? }`; `weight` scales that line relative to the others. Changing it morphs the current word into the new one. A function of viewport width lets you restructure on a phone. |
 | `hulls`       | `Record<string, HullShape[]>` | bundled | Collision hulls for your glyphs. The bundled set is traced against Cherry Bomb One — a different display face wants its own (see *Authoring hulls*). |
 | `palette`     | `readonly number[]`       | 8 festive colours | Per-letter fill colours, cycled. |
-| `layout`      | `LayoutStrategy`          | derived from `phrase` | Full control of slot geometry. Overrides `phrase`. See `createLineLayout`. |
+| `layout`      | `LayoutStrategy`          | derived from `phrase` | **Live.** Full control of slot geometry; overrides `phrase`. Changing it morphs, same as `phrase`. See `createLineLayout`. |
 | `idleFrames`  | `number \| false`         | `110`     | Stop the PIXI ticker after this many fully-calm frames; `false` never stops. Wakes on pointer, resize, and exit. |
 | `reducedMotion` | `boolean`               | the media query | Force the no-rain path: letters start on their slots and the cage goes up immediately. |
 | `maxResolution` | `number \| (w) => number` | `2` ≤640px, else `2.5` | Cap on `devicePixelRatio`. A phone at DPR 3 renders 9× the pixels for no visible gain. |
