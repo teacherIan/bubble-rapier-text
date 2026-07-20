@@ -18,16 +18,14 @@ const RESTITUTION = 0.15 // letter-vs-letter bounce — kept low so contacts dis
 // that comes from gravity + LINEAR_DAMPING, not restitution).
 const SOLVER_ITERATIONS = 8 // > the default 4: fewer residual penetrations in the packed pile = fewer wedges at the source
 const WALL_T = 240
-// Drag spring. Anchoring it at the GRABBED point (a penalty "mouse joint") drove a runaway
-// orbit/spin about an off-centre grab — the body whirled at ~13 rad/s and no amount of
-// damping settled it. So we anchor at the body CENTRE instead: pull the centre toward
-// (cursor − grabOffset) so the grabbed point still lands under the pointer, but the force
-// is applied at the centre of mass → it produces NO torque. A drag is pure translation; it
-// can't spin. (Gravity is a centre force too, so it adds no torque either.) Light angular
-// damping calms any spin a neighbour contact imparts, leaving only a gentle rotate.
-const DRAG_STIFFNESS = 700 // = ω²: how hard the body chases so the grabbed point sits at the cursor
-const DRAG_DAMP = 50 // ≈critical velocity damping (snappy + stable, no buzz)
-const DRAG_ANG_DAMP = 30 // angular-velocity damping while dragging (calms contact-induced spin)
+// Drag is a Rapier REVOLUTE "mouse joint": a kinematic anchor body sits at the cursor and the
+// grabbed point is pinned to it (see attachMouseJoint), so the letter hinges/swings about wherever
+// you grabbed it (grab the top of a tall glyph and it dangles + swings under gravity, like lifting a
+// real object by an edge). An earlier hand-rolled penalty spring at the grab point drove a runaway
+// off-centre orbit (~13 rad/s); a hard joint has no positional feedback, so the natural hinge is
+// solver-stable and never whirls. (The old centre-anchored spring avoided the spin by giving up the
+// hinge entirely — pure translation, no rotation; its DRAG_STIFFNESS/DRAG_DAMP/DRAG_ANG_DAMP
+// constants are gone with it — a hard joint needs no tuning.)
 // Untangle: a letter that's out of place AND stops making progress toward its slot is wedged
 // against its neighbours. We free it by GHOSTING it (collisions off) and then DRIVING it home —
 // directly lerping its pose to slot + upright each frame so it glides through its neighbours and
@@ -72,12 +70,17 @@ interface LetterBody {
   bestScore: number // best (min) placement score (position+tilt) since last placed/retargeted — jitter-proof
 }
 
-export interface DragState {
-  index: number // letter being dragged
-  localX: number // grabbed point in the letter's local frame (the pivot)
-  localY: number
-  cursorX: number // spring target (world px)
+// A drag is a Rapier revolute "mouse joint": a kinematic anchor at the cursor pinned to the grabbed
+// point, so the body swings freely about it (a hinge — where you grab matters).
+export interface MouseJoint {
+  cursorBody: RAPIER.RigidBody // kinematic anchor, moved to the pointer each step
+  joint: RAPIER.ImpulseJoint // revolute joint: grabbed point ↔ cursor (free to rotate → swing)
+  cursorX: number
   cursorY: number
+}
+
+export interface DragState extends MouseJoint {
+  index: number // letter being dragged
 }
 
 export interface CelebrateWorld {
@@ -337,6 +340,49 @@ export function solidifyLetter(state: CelebrateWorld, index: number): void {
   if (L && L.ghost) setLetterSolid(L, true)
 }
 
+// ── Drag: a Rapier revolute "mouse joint" (the grabbed point hinges to the cursor) ─────────────
+function attachMouseJoint(state: CelebrateWorld, body: RAPIER.RigidBody, grabLocalX: number, grabLocalY: number, cursorX: number, cursorY: number): MouseJoint {
+  // A kinematic anchor body at the cursor, pinned to the grabbed point by a revolute joint. The body
+  // is free to ROTATE about that pin, so it swings from wherever you grabbed it (a hinge).
+  const cursorBody = state.world.createRigidBody(state.rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(cursorX, cursorY))
+  const joint = state.world.createImpulseJoint(
+    state.rapier.JointData.revolute({ x: 0, y: 0 }, { x: grabLocalX, y: grabLocalY }), // anchor on cursor ↔ grabbed local point
+    cursorBody,
+    body,
+    true,
+  )
+  return { cursorBody, joint, cursorX, cursorY }
+}
+
+function detachMouseJoint(state: CelebrateWorld, m: MouseJoint): void {
+  state.world.removeImpulseJoint(m.joint, true)
+  state.world.removeRigidBody(m.cursorBody)
+}
+
+/** Grab a letter at a point in its local frame; it then hinges/swings from there as you drag. */
+export function startLetterDrag(state: CelebrateWorld, index: number, grabLocalX: number, grabLocalY: number, cursorX: number, cursorY: number): void {
+  const L = state.letters[index]
+  if (!L) return
+  if (state.drag) detachMouseJoint(state, state.drag) // clear any prior drag
+  state.drag = { index, ...attachMouseJoint(state, L.body, grabLocalX, grabLocalY, cursorX, cursorY) }
+}
+
+/** Update the cursor anchor (on pointer move). */
+export function moveDrag(state: CelebrateWorld, cursorX: number, cursorY: number): void {
+  if (state.drag) {
+    state.drag.cursorX = cursorX
+    state.drag.cursorY = cursorY
+  }
+}
+
+/** Release the drag — the letter keeps its fling momentum, then the slot spring carries it home. */
+export function releaseDrag(state: CelebrateWorld): void {
+  if (state.drag) {
+    detachMouseJoint(state, state.drag)
+    state.drag = null
+  }
+}
+
 /**
  * Drop every letter off the bottom of the screen — the /celebrate "Start" exit. Removes the
  * floor (so the bottom is open) and stops the homing springs; gravity then pulls the letters
@@ -346,7 +392,7 @@ export function solidifyLetter(state: CelebrateWorld, index: number): void {
 export function exitCelebrate(state: CelebrateWorld): void {
   if (state.exiting) return
   state.exiting = true
-  state.drag = null
+  releaseDrag(state) // detach any in-flight drag joint + cursor anchor before the world tears down
   // Open the bottom. If the entrance hasn't placed the walls yet, mark them added so the
   // floor is never created (nothing to fall back onto).
   if (state.floorBody) {
@@ -440,28 +486,10 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
     }
   }
 
-  // Drag: a damped spring on the body CENTRE whose target is (cursor − grabOffset), so the
-  // grabbed point tracks the pointer while the force stays at the centre of mass — pure
-  // translation, no drag torque, so it can't whirl. Light angular damping calms contact spin.
-  if (state.drag) {
-    const L = letters[state.drag.index]
-    if (L) {
-      const b = L.body
-      const p = b.translation()
-      const rot = b.rotation()
-      const c = Math.cos(rot)
-      const s = Math.sin(rot)
-      const rx = c * state.drag.localX - s * state.drag.localY // grab offset (centre→grabbed point), world frame
-      const ry = s * state.drag.localX + c * state.drag.localY
-      const tx = state.drag.cursorX - rx // where the CENTRE must be for the grabbed point to sit at the cursor
-      const ty = state.drag.cursorY - ry
-      const lv = b.linvel()
-      const fx = (tx - p.x) * DRAG_STIFFNESS - lv.x * DRAG_DAMP
-      const fy = (ty - p.y) * DRAG_STIFFNESS - lv.y * DRAG_DAMP
-      b.applyImpulse({ x: fx * dt * L.mass, y: fy * dt * L.mass }, true) // at the centre → no torque
-      b.applyTorqueImpulse(-b.angvel() * DRAG_ANG_DAMP * dt * L.inertia, true)
-    }
-  }
+  // Drag: just steer the kinematic cursor anchor to the pointer — the revolute joint (attached on
+  // grab) pins the grabbed point to it and lets the letter swing about it (a hinge). Setting the
+  // next-kinematic translation gives the body a real velocity, so a fast drag flings it.
+  if (state.drag) state.drag.cursorBody.setNextKinematicTranslation({ x: state.drag.cursorX, y: state.drag.cursorY })
 
   // Cap speeds so the solver always sees resolvable motion (the linear spring would
   // otherwise fling far-spawned letters too fast for contacts to keep up). Discarded letters

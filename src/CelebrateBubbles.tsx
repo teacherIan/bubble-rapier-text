@@ -6,6 +6,9 @@ import {
   stepCelebrate,
   solidifyLetter,
   exitCelebrate,
+  startLetterDrag,
+  moveDrag,
+  releaseDrag,
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
@@ -227,14 +230,14 @@ export function CelebrateBubbles({
         const i = pickLetter(x, y)
         if (i < 0) return // missed all letters — do nothing (background click used to re-scatter, but users tap here to grab a letter)
         solidifyLetter(world, i) // grabbing a ghosting letter makes it solid again
-        // The grabbed point in the letter's LOCAL frame, so the drag spring pivots there.
+        // The grabbed point in the letter's LOCAL frame becomes the hinge the joint pins to the cursor.
         const p = world.letters[i].body.translation()
         const rot = world.letters[i].body.rotation()
         const c = Math.cos(rot)
         const s = Math.sin(rot)
         const dx = x - p.x
         const dy = y - p.y
-        world.drag = { index: i, localX: c * dx + s * dy, localY: -s * dx + c * dy, cursorX: x, cursorY: y }
+        startLetterDrag(world, i, c * dx + s * dy, -s * dx + c * dy, x, y)
         try {
           el.setPointerCapture(e.pointerId)
         } catch {
@@ -245,12 +248,11 @@ export function CelebrateBubbles({
       const onPointerMove = (e: PointerEvent) => {
         if (!world.drag) return
         const { x, y } = toWorld(e)
-        world.drag.cursorX = x
-        world.drag.cursorY = y
+        moveDrag(world, x, y)
       }
 
       const endDrag = (e: PointerEvent) => {
-        world.drag = null // stays dynamic; keeps its momentum, then the slot-spring wins
+        releaseDrag(world) // detach the joint + cursor anchor; the letter keeps its fling, then springs home
         try {
           el.releasePointerCapture(e.pointerId)
         } catch {
