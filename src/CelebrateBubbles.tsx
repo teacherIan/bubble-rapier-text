@@ -18,7 +18,7 @@ import {
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
-import { hullForGlyph, scaleHull, strokeHullPx, type PxShape } from './glyphHulls'
+import { GLYPH_HULLS, makeHullForGlyph, scaleHull, strokeHullPx, type HullShape, type PxShape } from './glyphHulls'
 import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
 
@@ -47,7 +47,7 @@ const BASE_SIZE = 120 // px for a weight-1 line before fitting
 // sizes left to warm — and a face loaded at any size is loaded for all of them.
 const FONT_LOAD_PX = 120
 
-// One festive color per letter (cycled).
+// One festive color per letter (cycled). The default; override with the `palette` prop.
 const PALETTE = [0xef6f6c, 0xf4a259, 0xf6c453, 0x8cb369, 0x4d9de0, 0x7768ae, 0xe26d9e, 0x49b6a8]
 
 const GRAB_PAD = 1.15 // forgiveness around a glyph's box when picking under the cursor
@@ -80,8 +80,12 @@ export function CelebrateBubbles({
   exiting = false,
   transparent = false,
   frame = false,
+  background,
+  title = 'Drag a letter',
   play = true,
   phrase,
+  hulls,
+  palette = PALETTE,
   layout: layoutProp,
   idleFrames = 110,
   reducedMotion,
@@ -97,6 +101,19 @@ export function CelebrateBubbles({
   play?: boolean
   /** The phrase to set. Lines, or a function of viewport width (stack more lines on a phone). */
   phrase?: Line[] | ((vw: number) => Line[])
+  /**
+   * Collision hulls for YOUR glyphs, keyed by character (font-size units, origin = glyph centre).
+   * Defaults to the bundled set, which is traced against Cherry Bomb One — so a different display
+   * face wants its own, authored in `<GlyphHullEditor>`. Anything missing falls back to a ball
+   * sized to the glyph's box, which collides as a blob rather than as the letter.
+   */
+  hulls?: Record<string, HullShape[]>
+  /** Per-letter fill colours, cycled in order. */
+  palette?: readonly number[]
+  /** CSS background behind the canvas. Overrides the default gradient; `transparent` wins over both. */
+  background?: string
+  /** The container's `title`/tooltip. User-visible text, so a non-English host needs to set it. */
+  title?: string
   /** Full control of slot geometry. Overrides `phrase`. */
   layout?: LayoutStrategy
   /** Stop the ticker after this many fully-calm frames; false never stops. */
@@ -124,6 +141,35 @@ export function CelebrateBubbles({
   onErrorRef.current = onError
   // Published by the build effect so the `exiting` effect below can restart a stopped ticker.
   const wakeRef = useRef<(() => void) | null>(null)
+
+  // The world is built ONCE on mount (see the big effect below), so these props are read from that
+  // first closure and later changes are silently ignored. Changing `phrase` and seeing nothing
+  // happen is the first mistake anyone makes, and it looks exactly like a bug in this library — so
+  // say so, loudly, in dev. Remount with a `key` to change them until a live word-to-word
+  // transition exists (planClaims is the planner half; the orchestrator is not ported yet).
+  const mountProps = useRef({ phrase, hulls, palette, layout: layoutProp, frame, position })
+  if (import.meta.env?.DEV) {
+    const m = mountProps.current
+    const changed = (
+      [
+        ['phrase', m.phrase !== phrase],
+        ['hulls', m.hulls !== hulls],
+        ['palette', m.palette !== palette],
+        ['layout', m.layout !== layoutProp],
+        ['frame', m.frame !== frame],
+        ['position', m.position !== position],
+      ] as const
+    )
+      .filter(([, did]) => did)
+      .map(([name]) => name)
+    if (changed.length) {
+      console.warn(
+        `[bubble-rapier-text] ${changed.join(', ')} changed after mount and will be IGNORED — the ` +
+          'scene is built once. Remount with a different React `key` to apply it.',
+      )
+      mountProps.current = { phrase, hulls, palette, layout: layoutProp, frame, position } // warn once per change
+    }
+  }
 
   // When asked to exit, fling the letters off-screen. (If the world is still being built,
   // the build path checks exitingRef and exits as soon as it's ready.)
@@ -206,6 +252,13 @@ export function CelebrateBubbles({
         return total
       }
 
+      // Bind the hull map ONCE here rather than threading it through every build path — this is
+      // called per glyph per rebuild.
+      const hullFor = makeHullForGlyph(hulls ?? GLYPH_HULLS)
+      // An empty palette would make `% palette.length` NaN, index to undefined, and hand PIXI a
+      // style with no fill. Fall back rather than render invisible letters.
+      const colors = palette.length ? palette : PALETTE
+
       const layout: LayoutStrategy =
         layoutProp ??
         createLineLayout({
@@ -221,13 +274,13 @@ export function CelebrateBubbles({
       const renderLetters: RenderLetter[] = []
       let colorSeq = 0 // monotonic, NOT renderLetters.length — culls splice that and colours would drift
       const specFor = (slot: Slot): { spec: LetterSpec; render: RenderLetter } => {
-        const t = new PIXI.Text({ text: slot.ch, style: letterStyle(PALETTE[colorSeq++ % PALETTE.length], slot.size) })
+        const t = new PIXI.Text({ text: slot.ch, style: letterStyle(colors[colorSeq++ % colors.length], slot.size) })
         t.anchor.set(0.5)
         app.stage.addChild(t)
         const hw = Math.max(8, t.width * 0.42)
         const hh = Math.max(8, t.height * 0.4)
         // Hand-authored hull (font-size units, origin = glyph centre) scaled to px.
-        const colliders = scaleHull(hullForGlyph(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+        const colliders = scaleHull(hullFor(slot.ch, hw / slot.size, hh / slot.size), slot.size)
         return {
           spec: { colliders, hw, hh, slotX: slot.x, slotY: slot.y },
           render: { text: t, hw, hh, colliders },
@@ -497,7 +550,7 @@ export function CelebrateBubbles({
             const hh = Math.max(8, r.text.height * 0.4)
             r.hw = hw
             r.hh = hh
-            r.colliders = scaleHull(hullForGlyph(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+            r.colliders = scaleHull(hullFor(slot.ch, hw / slot.size, hh / slot.size), slot.size)
             retargetLetter(world, i, slot.x, slot.y)
           })
         }
@@ -566,14 +619,14 @@ export function CelebrateBubbles({
   return (
     <div
       ref={containerRef}
-      title="Drag a letter"
+      title={title}
       style={{
         position, // 'fixed' = whole viewport; 'absolute' = fill a positioned parent (overlay)
         inset: 0,
         overflow: 'hidden',
         cursor: 'grab',
         touchAction: 'none',
-        background: transparent ? 'transparent' : 'radial-gradient(circle at 50% 38%, #ffffff, #eef4ff 58%, #e3ecfa)',
+        background: transparent ? 'transparent' : (background ?? 'radial-gradient(circle at 50% 38%, #ffffff, #eef4ff 58%, #e3ecfa)'),
       }}
     />
   )

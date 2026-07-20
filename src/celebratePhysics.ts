@@ -636,6 +636,16 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
       }
     }
 
+    // Sample the velocity BEFORE the springs run. applyImpulse mutates linvel immediately, so
+    // reading it afterwards would measure the spring's own kick rather than the letter's actual
+    // motion — and since the kick is proportional to distance-from-slot, every letter far enough
+    // away to count as "wrong" (dist > stuckDist) is also kicked past PARK_V in the same frame.
+    // Reading after therefore made "is it parked?" permanently false for a positionally-wedged
+    // letter, killing the snappy path for the exact case it exists to catch and leaving the ~2s
+    // watchdog to do all the work. This is last step's real motion.
+    const vPre = L.body.linvel()
+    const preSp2 = vPre.x * vPre.x + vPre.y * vPre.y
+
     // Slot + upright springs (solid letters), using CACHED mass/inertia (constant per glyph) instead
     // of 3 WASM calls/frame. Linear spring is mass-normalized (impulse/m = accel); the angular
     // spring is inertia-normalized so ω² is consistent across glyph sizes.
@@ -659,10 +669,8 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
       // sits and get ejected → a violent bounce). They re-home the instant it moves away.
     } else {
       L.wrongTotal++ // counts wrong frames at ANY speed (the jostled-above-PARK_V case)
-      const v = L.body.linvel()
-      const sp2 = v.x * v.x + v.y * v.y
       // Snappy path: PARKED-and-wrong → free fast. (A wobble can't reset wrongFrames.)
-      if (sp2 < PARK_V2) {
+      if (preSp2 < PARK_V2) {
         if (++L.wrongFrames > STUCK_FRAMES) {
           freeLetter(L) // ghost + stop; the glide above drives it home next frame
           continue

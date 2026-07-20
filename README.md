@@ -36,15 +36,22 @@ Other scripts:
 npm run build      # static demo build → dist/
 npm run preview    # serve the built demo
 npm run typecheck  # tsc -b (strict, no emit)
-npm run build:lib  # optional precompiled library bundle → dist/ (ESM + .d.ts)
+npm run lint       # eslint, zero-warning
+npm test           # vitest (pure geometry + a real Rapier world)
+npm run build:lib  # the published library bundle → dist/ (ESM + .d.ts)
 ```
 
 ---
 
 ## Use it in your app
 
-The package's `exports` point at the TypeScript **source**, so a bundler-based app
-(Vite, Next, webpack 5, …) can consume it directly — no build step required.
+The package's `exports` point at the prebuilt ESM bundle in `dist/` (with `.d.ts` alongside), so
+any bundler — Vite, Next, webpack, Rollup, esbuild — or plain node ESM can consume it. `prepare`
+builds that bundle on install, so a git dependency works too:
+
+```bash
+npm i github:teacherIan/bubble-rapier-text
+```
 
 ```tsx
 import { CelebrateBubbles } from 'bubble-rapier-text'
@@ -59,23 +66,44 @@ export function Splash() {
 }
 ```
 
-Peer dependencies: `react` and `react-dom` (18 or 19). `pixi.js` and
-`@dimforge/rapier2d-compat` come along as regular dependencies.
+**Peer dependencies:** `react`, `react-dom` (18 or 19), `pixi.js` (8), and
+`@dimforge/rapier2d-compat` (0.19). npm 7+ installs peers automatically, so there is nothing extra
+to do — they are peers rather than dependencies because their objects cross this package's API
+surface (`CelebrateWorld.rapier` is public), and a second copy in the graph means duplicate WebGL
+registration and `instanceof` checks that fail across the boundary.
 
 ### `<CelebrateBubbles>` props
 
-All optional. The world is built **once** on mount; `position` / `frame` / `transparent` are
-read from the initial render. `exiting` is live (flip it to trigger the exit).
+All optional. The scene is built **once** on mount, so most props are read from the first render
+and changing them later does nothing — remount with a different React `key` to apply a change. (In
+dev the component warns when you change one of the frozen props.) Only `exiting` and `play` are
+live.
 
 | Prop          | Type                      | Default   | What it does |
 | ------------- | ------------------------- | --------- | ------------ |
 | `position`    | `'fixed' \| 'absolute'`   | `'fixed'` | `'fixed'` fills the viewport; `'absolute'` fills a positioned parent (overlay). |
 | `exiting`     | `boolean`                 | `false`   | Flip to `true` to fling every letter off the bottom of the screen (a hand-off / dismiss). |
 | `transparent` | `boolean`                 | `false`   | Drop the gradient backdrop so whatever's behind shows through. |
-| `frame`       | `boolean`                 | `false`   | Push the two lines to the top and bottom edges so they *frame* a central element instead of sitting over the middle. |
+| `frame`       | `boolean`                 | `false`   | Push the lines to the top and bottom edges so they *frame* a central element instead of sitting over the middle. |
+| `play`        | `boolean`                 | `true`    | **Live.** Hold the letters at their spawn edges until `true`, so a host can finish its own intro first. Latches once released. |
+| `phrase`      | `Line[] \| (vw) => Line[]` | the demo phrase | What to set. `Line` is `{ text, weight? }`; `weight` scales that line relative to the others. A function of viewport width lets you restructure on a phone. |
+| `hulls`       | `Record<string, HullShape[]>` | bundled | Collision hulls for your glyphs. The bundled set is traced against Cherry Bomb One — a different display face wants its own (see *Authoring hulls*). |
+| `palette`     | `readonly number[]`       | 8 festive colours | Per-letter fill colours, cycled. |
+| `layout`      | `LayoutStrategy`          | derived from `phrase` | Full control of slot geometry. Overrides `phrase`. See `createLineLayout`. |
+| `idleFrames`  | `number \| false`         | `110`     | Stop the PIXI ticker after this many fully-calm frames; `false` never stops. Wakes on pointer, resize, and exit. |
+| `reducedMotion` | `boolean`               | the media query | Force the no-rain path: letters start on their slots and the cage goes up immediately. |
+| `maxResolution` | `number \| (w) => number` | `2` ≤640px, else `2.5` | Cap on `devicePixelRatio`. A phone at DPR 3 renders 9× the pixels for no visible gain. |
+| `background`  | `string`                  | a soft gradient | CSS background behind the canvas. `transparent` wins over it. |
+| `title`       | `string`                  | `'Drag a letter'` | The container's tooltip. User-visible text — set it in a non-English host. |
+| `onReady`     | `() => void`              | —         | Fires on the first painted frame. Hide your own boot screen here. |
+| `onError`     | `(err: unknown) => void`  | —         | Init failed (WebGL blocked, WASM refused). Leave your fallback UI up. |
 
-The phrase, sizes, palette, and font live as constants at the top of
-[`src/CelebrateBubbles.tsx`](src/CelebrateBubbles.tsx) — edit there to retheme.
+### Retheming
+
+`phrase`, `hulls`, `palette`, and `background` are props — you should not need to fork this package
+to change the words or the look. The display **font** is the one thing still baked in
+(`src/styles.css` registers the vendored face, and `src/letterStyle.ts` names it); swapping it also
+means authoring hulls for the new face, since the bundled hulls trace Cherry Bomb One specifically.
 
 ### Lower-level exports
 
@@ -86,22 +114,47 @@ the hull data + helpers are plain functions:
 import {
   // framework-free sim — drive it from your own render loop
   createCelebrateWorld, stepCelebrate, solidifyLetter, exitCelebrate,
+  armEnclosureNow, // skip the entrance delay when letters start at their final pose
   // re-layout: morph the live world into a NEW word — reuse matching glyphs, fling the rest
   // off (scatterLetter), fly missing ones in (addLetter); removeWalls opens the edges first
   removeWalls, retargetLetter, scatterLetter, addLetter,
+  removeLetter, cullDiscarded, // collect flung letters once they're off-screen
   resizeWorld, // resize + rebuild the enclosure on a viewport / device-rotation change
-  type LetterSpec, type CelebrateWorld,
-  // glyph hulls
-  GLYPH_HULLS, GLYPH_LIST, hullForGlyph, scaleHull, strokeHullPx,
-  // shared Rapier-world primitives
-  createPhysicsWorld, createWallCage, ensureRapierInitialized,
+  // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter
+  // picked up by its top edge dangles and swings
+  startLetterDrag, moveDrag, releaseDrag,
+  startBodyDrag, moveBodyDrag, endBodyDrag, // …and the same hinge for YOUR bodies
+  type LetterSpec, type LetterBody, type CelebrateWorld, type MouseJoint,
+  // which live letter claims which new slot (pairs with the re-layout primitives above)
+  planClaims,
+  // slots derived from the live viewport; recompute on resize
+  createLineLayout,
+  // glyph hulls — pass your own map, or bind one with makeHullForGlyph
+  GLYPH_HULLS, GLYPH_LIST, EDITABLE_GLYPHS, hullForGlyph, makeHullForGlyph, scaleHull, strokeHullPx,
+  // the ONE text style the component and both dev tools render with
+  letterStyle, metricStyle, FONT_STACK,
+  // shared Rapier-world primitives; setRapierLoader swaps in your own WASM build
+  createPhysicsWorld, createWallCage, ensureRapierInitialized, setRapierLoader,
 } from 'bubble-rapier-text'
 ```
 
-The self-assembly is robust: each letter frees itself from a wedge on its own schedule (it
-ghosts + gets a kick toward its slot when its placement score stalls), so a jittery neighbour
-can't trap it — including a thin glyph that settles on its side. See the public surface in
-[`src/index.ts`](src/index.ts).
+Driving it yourself means calling `stepCelebrate(world, dt)` on a fixed timestep and copying each
+body's pose onto your own sprites. `world.settledFrames` counts consecutive fully-calm frames, so a
+host can stop its render loop once the scene is at rest:
+
+```ts
+if (world.settledFrames > 110 && !world.drag) stopMyTicker()
+```
+
+The self-assembly is robust: each letter frees itself from a wedge on its own schedule. A wedged
+letter is GHOSTED (collisions off) and then **driven** home — its pose is lerped straight to
+slot + upright each frame, so it converges by construction. (It has to be driven, not sprung: a
+collider-disabled body's mass properties are inert, so impulses do nothing to a ghost.) Two
+independent triggers catch it — parked-and-wrong for a letter that comes to rest, and a
+speed-independent watchdog for one that neighbours keep jostling so it never parks. A jittery
+neighbour therefore can't trap it, including a thin glyph that settles on its side.
+
+See the full public surface in [`src/index.ts`](src/index.ts).
 
 ---
 

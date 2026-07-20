@@ -21,13 +21,13 @@
   ],
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/bubble-rapier-text.js"
     },
     "./styles.css": "./src/styles.css",
     "./package.json": "./package.json"
   },
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
   "files": [
     "src",
     "dist",
@@ -47,7 +47,8 @@
     "prepare": "npm run build:lib",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "npm run build:lib"
   },
   "peerDependencies": {
     "@dimforge/rapier2d-compat": "^0.19.0",
@@ -85,5 +86,6 @@
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
-  }
+  },
+  "main": "./dist/bubble-rapier-text.js"
 }

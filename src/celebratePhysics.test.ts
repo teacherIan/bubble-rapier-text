@@ -8,6 +8,8 @@ import {
   exitCelebrate,
   resizeWorld,
   removeWalls,
+  startLetterDrag,
+  releaseDrag,
   type CelebrateWorld,
   type LetterSpec,
 } from './celebratePhysics'
@@ -189,5 +191,106 @@ describe('reclaiming a flung letter', () => {
     // never true, so the host's ticker could never stop.
     for (let i = 0; i < 600; i++) stepCelebrate(w, DT)
     expect(w.settledFrames).toBeGreaterThan(0)
+  })
+})
+
+describe('the self-freeing untangle', () => {
+  // The flagship invariant: a letter that cannot reach its slot by springs alone must ALWAYS be
+  // freed and driven home. Both triggers are covered, because each exists to close a hole the
+  // other leaves — and a regression here is invisible until a wordmark silently renders wrong.
+
+  /** Pin a letter far from its slot so the springs cannot resolve it. */
+  const wedge = (w: CelebrateWorld, i: number, x: number, y: number) => {
+    const b = w.letters[i].body
+    b.setTranslation({ x, y }, true)
+    b.setLinvel({ x: 0, y: 0 }, true)
+    b.setAngvel(0, true)
+  }
+
+  it('frees a PARKED, out-of-place letter (the fast path)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+
+    // Hold it far from its slot and motionless every frame — the wedged case.
+    for (let i = 0; i < 60; i++) {
+      wedge(w, 0, 100, 100)
+      stepCelebrate(w, DT)
+      if (L.ghost) break
+    }
+    expect(L.ghost, 'a parked out-of-place letter must be ghosted for the glide').toBe(true)
+  })
+
+  it('drives a freed letter home and re-solidifies it', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    for (let i = 0; i < 60 && !L.ghost; i++) {
+      wedge(w, 0, 100, 100)
+      stepCelebrate(w, DT)
+    }
+    expect(L.ghost).toBe(true)
+
+    // Now let it glide: the pose is DRIVEN, so it converges without any spring help.
+    for (let i = 0; i < 200 && L.ghost; i++) stepCelebrate(w, DT)
+    const p = L.body.translation()
+    expect(Math.hypot(p.x - L.tx, p.y - L.ty)).toBeLessThan(w.unghostDist + 1)
+    expect(L.ghost, 'it must hand back to the springs once home + upright').toBe(false)
+  })
+
+  it('frees a letter that is jostled and never parks (the watchdog)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT) // arrive once, arming the watchdog
+    expect(L.arrivedOnce).toBe(true)
+
+    // Held out of place but ALWAYS moving faster than PARK_V, so the fast path can never fire.
+    for (let i = 0; i < 400 && !L.ghost; i++) {
+      L.body.setTranslation({ x: 100, y: 100 }, true)
+      L.body.setLinvel({ x: 400, y: 0 }, true) // well above PARK_V (95)
+      stepCelebrate(w, DT)
+    }
+    expect(L.ghost, 'a jostled letter never parks — the watchdog must still free it').toBe(true)
+  })
+
+  it('does not fight the user: no untangle while a letter is held', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    startLetterDrag(w, 0, 0, 0, 100, 100)
+    const L = w.letters[0]
+    for (let i = 0; i < 200; i++) {
+      wedge(w, 0, 100, 100)
+      stepCelebrate(w, DT)
+    }
+    // Ghosting a letter pressed against a held one ejects it violently when it re-solidifies.
+    expect(L.ghost).toBe(false)
+    releaseDrag(w)
+  })
+
+  it('does not fight the host either: `busy` stands the untangle down', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    for (let i = 0; i < 200; i++) {
+      wedge(w, 0, 100, 100)
+      stepCelebrate(w, DT, true) // host is holding one of its own bodies over the letters
+    }
+    expect(L.ghost).toBe(false)
+  })
+
+  it('does not cut short a letter that has never arrived (a fly-in)', async () => {
+    const w = await createCelebrateWorld([atSlot(400, 300)], 800, 600, 60, 20)
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    expect(L.arrivedOnce).toBe(false)
+    // It spawns off-screen and flies in. The watchdog must stay disarmed the whole way, or the
+    // dramatic entrance gets replaced by a teleport.
+    for (let i = 0; i < 100; i++) {
+      L.body.setLinvel({ x: 300, y: 0 }, true) // in flight, never parked
+      stepCelebrate(w, DT)
+      if (L.arrivedOnce) break
+      expect(L.ghost, 'a never-arrived letter must not be freed mid-flight').toBe(false)
+    }
   })
 })
