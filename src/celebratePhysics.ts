@@ -60,6 +60,15 @@ const SPAWN_MARGIN = 120 // how far outside the screen edge letters spawn
 // flung at thousands of px/s in one step — faster than the solver can resolve contacts, which
 // tangles the pile. Cap fly-in speed to a solver-safe value (≈18px/step at 60Hz).
 const MAX_SPEED = 1200 // px/s
+// …but a phone's slot is a fraction of a desktop's, so the same cap reads as a violent whip on a
+// narrow screen. Ease the cap down with the viewport; ≥ SPEED_FULL_W is unchanged.
+const MAX_SPEED_PHONE = 850
+const SPEED_FULL_W = 1100
+function maxSpeedFor(w: number): number {
+  if (w >= SPEED_FULL_W) return MAX_SPEED
+  const t = Math.max(0, w / SPEED_FULL_W)
+  return MAX_SPEED_PHONE + (MAX_SPEED - MAX_SPEED_PHONE) * t
+}
 const MAX_SPIN = 16 // rad/s
 
 /** Per-letter spec built on the main thread (needs canvas/font) and shipped to the worker. */
@@ -108,6 +117,7 @@ export interface CelebrateWorld {
   unghostDist: number
   elapsedMs: number
   wallsAdded: boolean
+  settledFrames: number // consecutive fully-calm frames — the host's cue that it may stop its ticker
   floorBody: RAPIER.RigidBody | null // the bottom wall, removed on exit so letters fall off-screen
   walls: RAPIER.RigidBody[] // all four enclosure walls — removed wholesale on a word-to-word transition
   exiting: boolean // true once dropping off-screen (springs off, floor removed) — the /celebrate Start exit
@@ -274,7 +284,7 @@ export async function createCelebrateWorld(
 
   const letters: LetterBody[] = specs.map((spec) => createLetterBody(rapier, world, spec, w, h))
 
-  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, floorBody: null, walls: [], exiting: false, drag: null }
+  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, settledFrames: 0, floorBody: null, walls: [], exiting: false, drag: null }
 }
 
 // ── Transition primitives (re-layout to a new phrase) ───────────────────────────────────
@@ -434,6 +444,24 @@ export function endBodyDrag(state: CelebrateWorld, m: MouseJoint): void {
 }
 
 /**
+ * Add the enclosure immediately, skipping the entrance delay.
+ *
+ * For consumers that place letters at their final pose on frame one — a reduced-motion path, or a
+ * restored layout — there is no rain to contain, so the cage should be up from the start rather
+ * than WALL_DELAY_MS later.
+ *
+ * No-op once the cage has been added OR removed (see removeWalls); this is not a way to restore a
+ * removed cage mid-transition.
+ */
+export function armEnclosureNow(state: CelebrateWorld): void {
+  if (state.wallsAdded) return
+  const cage = addEnclosure(state.rapier, state.world, state.w, state.h)
+  state.floorBody = cage.floor
+  state.walls = cage.walls
+  state.wallsAdded = true
+}
+
+/**
  * Drop every letter off the bottom of the screen — the /celebrate "Start" exit. Removes the
  * floor (so the bottom is open) and stops the homing springs; gravity then pulls the letters
  * down and out. They stay solid, so they tumble against each other + the side walls on the
@@ -476,12 +504,21 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
   // Exiting: no springs/untangle/drag — just step, so gravity pulls the letters down through
   // the (now-removed) floor and off the bottom.
   if (state.exiting) {
+    state.settledFrames = 0 // letters are falling off-screen — emphatically not idle
     world.timestep = dt
     world.step()
     return
   }
 
-  state.elapsedMs += dt * 1000
+  // Calm until something this frame proves otherwise. `busy` is the host asserting it is doing
+  // something the sim can't see; a live drag is motion by definition; and before the cage is up
+  // the entrance is still running.
+  let calm = !busy && !state.drag && state.wallsAdded
+
+  // Only accumulate while it still matters — once the cage is up nothing reads elapsedMs again.
+  if (!state.wallsAdded) {
+    state.elapsedMs += dt * 1000
+  }
   if (!state.wallsAdded && state.elapsedMs >= WALL_DELAY_MS) {
     const cage = addEnclosure(rapier, world, state.w, state.h) // letters have flown in; now contain them
     state.floorBody = cage.floor
@@ -493,10 +530,14 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
   for (let i = 0; i < letters.length; i++) {
     if (i === draggedIndex) continue // driven by the drag spring below
     const L = letters[i]
-    if (L.discarded) continue // flung off in a transition — no spring/untangle, just flies under gravity
+    if (L.discarded) {
+      calm = false // still flying off-screen; the host must keep stepping until it is culled
+      continue // no spring/untangle — just gravity
+    }
     const p = L.body.translation()
     const dist = Math.hypot(L.tx - p.x, L.ty - p.y)
-    const ang = Math.atan2(Math.sin(L.body.rotation()), Math.cos(L.body.rotation()))
+    const r = L.body.rotation() // cache: one WASM read per letter per step (as with mass/inertia)
+    const ang = Math.atan2(Math.sin(r), Math.cos(r))
 
     // ── Gliding home (ghost) ─────────────────────────────────────────────────────────────
     // A freed letter is DRIVEN, not sprung: lerp its pose straight to slot + upright each frame
@@ -514,6 +555,7 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
         L.body.setRotation(ang * (1 - GLIDE_K), true)
         L.body.setLinvel({ x: 0, y: 0 }, true) // arrive calm so the un-ghost gate above passes
         L.body.setAngvel(0, true)
+        calm = false // gliding home — velocity is FORCED to 0 here, so gate on this, not on speed
         continue
       }
     }
@@ -533,6 +575,7 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
       L.arrivedOnce = true // reached its slot — the watchdog may now arm for it (catches a post-arrival jostle)
       continue
     }
+    calm = false // out of place (position or tilt) — not idle
     if (state.drag || busy) {
       // Don't fight the user. While they HOLD a letter — or hold one of their OWN bodies over the
       // letters (`busy`, see startBodyDrag) — the blocked letters just press against the obstacle;
@@ -571,15 +614,26 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
   // Cap speeds so the solver always sees resolvable motion (the linear spring would
   // otherwise fling far-spawned letters too fast for contacts to keep up). Discarded letters
   // are skipped — they're meant to fly off fast and get culled once off-screen.
+  const maxSp = maxSpeedFor(state.w) // responsive: a gentler fly-in on a narrow screen
+  const maxSp2 = maxSp * maxSp // compare v·v against this — the sqrt is only needed to rescale
   for (const L of letters) {
     if (L.discarded) continue
     const v = L.body.linvel()
-    const sp = Math.hypot(v.x, v.y)
-    if (sp > MAX_SPEED) L.body.setLinvel({ x: (v.x / sp) * MAX_SPEED, y: (v.y / sp) * MAX_SPEED }, true)
+    const sp2 = v.x * v.x + v.y * v.y
+    if (sp2 > maxSp2) {
+      const sp = Math.sqrt(sp2)
+      L.body.setLinvel({ x: (v.x / sp) * maxSp, y: (v.y / sp) * maxSp }, true)
+    }
     const av = L.body.angvel()
     if (av > MAX_SPIN) L.body.setAngvel(MAX_SPIN, true)
     else if (av < -MAX_SPIN) L.body.setAngvel(-MAX_SPIN, true)
   }
+
+  // One calm frame closes the idle gate a notch; anything unsettled reopens it. The HOST decides
+  // what to do with the count — typically stopping its ticker once it passes a threshold, which on
+  // a phone is the difference between a canvas that animates forever and one that goes quiet.
+  // Letters still have setCanSleep(false); this is our own notion of calm, not Rapier's.
+  state.settledFrames = calm ? state.settledFrames + 1 : 0
 
   world.timestep = dt
   world.step()

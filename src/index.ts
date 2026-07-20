@@ -27,6 +27,7 @@ export {
   scatterLetter,
   addLetter,
   resizeWorld, // resize the world + rebuild the enclosure on a viewport / device-rotation change
+  armEnclosureNow, // skip the entrance delay when letters start at their final pose (reduced motion)
   // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter grabbed
   // by its top edge dangles and swings rather than sliding rigidly
   startLetterDrag,
