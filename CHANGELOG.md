@@ -2,6 +2,61 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.3.0 — unreleased
+
+Makes the library consumable at all, and adds the pieces a second consumer needs.
+
+### Breaking
+
+- **`pixi.js` and `@dimforge/rapier2d-compat` are now `peerDependencies`.** Their objects cross the
+  API boundary (`CelebrateWorld.rapier` is public), so a second copy in the graph means duplicate
+  WebGL registration and `instanceof` misses. npm 7+ auto-installs peers, so a plain
+  `npm i bubble-rapier-text` still works.
+
+### Added
+
+- **Full A–Z coverage**: 52 authored glyph hulls, up from 29. Any word can be set; previously an
+  unauthored glyph fell back to a generic ball sized to its grab box.
+- **`hullForGlyph(ch, hw, hh, hulls?)` + `makeHullForGlyph(hulls)`** — bring your own hull map
+  instead of vendoring the module to swap it.
+- **`createLineLayout`** (`src/layout.ts`) — slots derived from the LIVE viewport, with per-line
+  `weight` so a subtitle stays smaller than its display line. Everything app-specific is a
+  parameter.
+- **Resize / rotation support** on `<CelebrateBubbles>` via a `ResizeObserver`: the renderer, the
+  world, the wall cage, and the untangle thresholds all follow the viewport.
+- **Idle gate** — `settledFrames` on the world, and the component stops its PIXI ticker after
+  `idleFrames` calm frames (default 110, `false` to disable), waking on pointer, resize, or nav.
+- **`planClaims`** (`src/transition.ts`) — the matching half of the re-layout primitives.
+- New props: `play`, `phrase`, `layout`, `idleFrames`, `reducedMotion`, `maxResolution`, `onReady`,
+  `onError`. All defaulted.
+- `armEnclosureNow`, `removeLetter`, `cullDiscarded`, `setRapierLoader`, and the `letterStyle`
+  module are now exported.
+- ESLint, Vitest, and 42 tests — the repo previously had none of the three.
+
+### Fixed
+
+- **The package could not be consumed.** `celebratePhysics.ts` imported through a build-time `@/`
+  alias that the CONSUMER's bundler had to resolve; an app defining its own `@ → ./src` resolved it
+  into its own tree. Now relative.
+- **A git install shipped no `dist`** — added the `prepare` script.
+- **Phrase measurement** used a raw 2D canvas context, which does not reliably resolve the loaded
+  web face; it under-measured, so the fit came out too large and end letters spawned pinned against
+  the walls. Now measured through `CanvasTextMetrics` with the render style.
+- **The fit ignored height entirely**, so a short or landscape viewport overlapped and clipped the
+  lines.
+- **A failed init leaked a WebGL context and a Rapier world.** Browsers cap live contexts, so in an
+  SPA that remounts, repeated failures bricked the canvas.
+- **`letterStyle` was triplicated** across the component and both dev tools, with a hand-maintained
+  "BYTE-IDENTICAL" comment. It is load-bearing — stroke and shadow inflate the text box whose centre
+  is the collider origin — and is now one shared module, which also adds the padding the copies
+  lacked (descenders and the shadow were being clipped out of the glyph texture).
+- **The hull editor's exporter serialised via `GLYPH_LIST`**, silently dropping any hull for a glyph
+  outside the demo phrase on the next re-bake. This is the bug that let this library and its first
+  consumer drift into two different hull sets.
+- `pickLetter` could grab a flung, mid-cull letter.
+- `scatterLetter` on an already-flung letter reset its cull lease, so repeated transitions could
+  keep a letter alive indefinitely.
+
 ## 0.2.0 — unreleased
 
 Merges three long-lived branches and brings the untangle in line with the design they assume.

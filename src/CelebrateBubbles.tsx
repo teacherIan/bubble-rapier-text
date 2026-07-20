@@ -10,11 +10,17 @@ import {
   moveDrag,
   releaseDrag,
   armEnclosureNow,
+  cullDiscarded,
+  removeLetter,
+  addLetter,
+  retargetLetter,
+  resizeWorld,
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
 import { hullForGlyph, scaleHull, strokeHullPx, type PxShape } from './glyphHulls'
 import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
+import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
 // bubble-letter backed by a Rapier rigid body whose collider is a HAND-AUTHORED hull of
@@ -30,8 +36,16 @@ import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 // off-thread worker for ~21 light bodies, which aren't the bottleneck; the worker pattern
 // stays available in celebratePhysics if a heavy/simultaneous case ever needs it).
 
-const LINE1 = { text: 'CELEBRATE', size: 120 }
-const LINE2 = { text: 'your hard work', size: 60 }
+// The demo phrase. `weight` keeps the subtitle half the size of the display line — without it a
+// single fitted size would render both at 120px.
+const DEFAULT_LINES: Line[] = [
+  { text: 'CELEBRATE', weight: 1 },
+  { text: 'your hard work', weight: 0.5 },
+]
+const BASE_SIZE = 120 // px for a weight-1 line before fitting
+// Warm the face at ONE representative size. Sizes are fitted at runtime now, so there are no fixed
+// sizes left to warm — and a face loaded at any size is loaded for all of them.
+const FONT_LOAD_PX = 120
 
 // One festive color per letter (cycled).
 const PALETTE = [0xef6f6c, 0xf4a259, 0xf6c453, 0x8cb369, 0x4d9de0, 0x7768ae, 0xe26d9e, 0x49b6a8]
@@ -67,6 +81,9 @@ export function CelebrateBubbles({
   transparent = false,
   frame = false,
   play = true,
+  phrase,
+  layout: layoutProp,
+  idleFrames = 110,
   reducedMotion,
   maxResolution = (w) => (w <= 640 ? 2 : 2.5),
   onReady,
@@ -78,6 +95,12 @@ export function CelebrateBubbles({
   frame?: boolean
   /** Hold the letters at their spawn edges until true — lets a host finish its own intro first. */
   play?: boolean
+  /** The phrase to set. Lines, or a function of viewport width (stack more lines on a phone). */
+  phrase?: Line[] | ((vw: number) => Line[])
+  /** Full control of slot geometry. Overrides `phrase`. */
+  layout?: LayoutStrategy
+  /** Stop the ticker after this many fully-calm frames; false never stops. */
+  idleFrames?: number | false
   /** Override the prefers-reduced-motion media query (letters start home, no rain). */
   reducedMotion?: boolean
   /** Cap on devicePixelRatio. A number, or a function of the viewport width. */
@@ -99,12 +122,22 @@ export function CelebrateBubbles({
   onReadyRef.current = onReady
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+  // Published by the build effect so the `exiting` effect below can restart a stopped ticker.
+  const wakeRef = useRef<(() => void) | null>(null)
 
   // When asked to exit, fling the letters off-screen. (If the world is still being built,
   // the build path checks exitingRef and exits as soon as it's ready.)
   useEffect(() => {
-    if (exiting && worldRef.current && !worldRef.current.exiting) exitCelebrate(worldRef.current)
+    if (exiting && worldRef.current && !worldRef.current.exiting) {
+      exitCelebrate(worldRef.current)
+      wakeRef.current?.() // the letters must FALL — a stopped ticker would freeze them in place
+    }
   }, [exiting])
+
+  // Same for `play`: if the ticker idled out while held, releasing the hold has to restart it.
+  useEffect(() => {
+    if (play) wakeRef.current?.()
+  }, [play])
 
   useEffect(() => {
     const el = containerRef.current
@@ -123,10 +156,7 @@ export function CelebrateBubbles({
       // to the stack so the text always appears (still legible either way).
       try {
         await Promise.race([
-          Promise.all([
-            document.fonts.load(`400 ${LINE1.size}px "Cherry Bomb One"`),
-            document.fonts.load(`400 ${LINE2.size}px "Cherry Bomb One"`),
-          ]),
+          document.fonts.load(`400 ${FONT_LOAD_PX}px "Cherry Bomb One"`),
           new Promise((resolve) => setTimeout(resolve, 1500)),
         ])
       } catch {
@@ -164,14 +194,9 @@ export function CelebrateBubbles({
       el.appendChild(app.canvas)
       builtApp = app
 
-      // Fit the phrase to the viewport: the fixed display sizes overflow narrow phone
-      // screens (letters jam against the walls), so scale both lines down until the
-      // widest fits the width with margin (0.8 leaves room so end letters aren't pinned).
-      // Measure through PIXI's own CanvasTextMetrics, not a raw 2D context. The raw context does
+      // Measure through PIXI's own CanvasTextMetrics, not a raw 2D context: the raw context does
       // not reliably resolve the loaded web face (it silently falls back to the system stack), so it
-      // UNDER-measures the phrase — the fit scale then comes out too large and the end letters spawn
-      // pinned against the walls. One reused style object per size; spaces are priced with the same
-      // SPACE_FRAC that buildLine advances by, so measurement and layout can't disagree.
+      // UNDER-measures — the fit then comes out too large and end letters spawn pinned to the walls.
       const measure = (text: string, size: number) => {
         const style = metricStyle(size)
         let total = 0
@@ -180,47 +205,43 @@ export function CelebrateBubbles({
         }
         return total
       }
-      const fit = Math.min(1, (w * 0.8) / Math.max(measure(LINE1.text, LINE1.size), measure(LINE2.text, LINE2.size)))
-      const line1 = { text: LINE1.text, size: LINE1.size * fit }
-      const line2 = { text: LINE2.text, size: LINE2.size * fit }
 
-      // Build the Pixi texts (rendered here) + the physics specs (for the sim world).
-      const renderLetters: RenderLetter[] = []
-      const specs: LetterSpec[] = []
-      const buildLine = (line: { text: string; size: number }, lineY: number) => {
-        const items = [...line.text].map((ch) => {
-          if (ch === ' ') return { ch, t: null as PIXI.Text | null, width: line.size * SPACE_FRAC }
-          const t = new PIXI.Text({ text: ch, style: letterStyle(PALETTE[renderLetters.length % PALETTE.length], line.size) })
-          t.anchor.set(0.5)
-          t.resolution = 2
-          return { ch, t, width: t.width }
+      const layout: LayoutStrategy =
+        layoutProp ??
+        createLineLayout({
+          lines: phrase ?? DEFAULT_LINES,
+          measure,
+          baseSize: BASE_SIZE,
+          frame,
         })
-        const total = items.reduce((s, it) => s + it.width, 0)
-        let cursor = w / 2 - total / 2
-        for (const it of items) {
-          const slotX = cursor + it.width / 2
-          cursor += it.width
-          if (!it.t) continue
-          it.t.style.fill = PALETTE[renderLetters.length % PALETTE.length] // per-letter color (length is final at push time)
-          app.stage.addChild(it.t)
-          const hw = Math.max(8, it.t.width * 0.42)
-          const hh = Math.max(8, it.t.height * 0.4)
-          // Hand-authored hull (font-size units, origin = glyph centre) scaled to px.
-          const colliders = scaleHull(hullForGlyph(it.ch, hw / line.size, hh / line.size), line.size)
-          specs.push({ colliders, hw, hh, slotX, slotY: lineY })
-          renderLetters.push({ text: it.t, hw, hh, colliders })
+
+      // ONE build path for a letter, shared by the initial build, a resize rebuild, and any future
+      // transition spawn. Divergent build paths are how a letter ends up with a collider that does
+      // not match the glyph the viewer sees.
+      const renderLetters: RenderLetter[] = []
+      let colorSeq = 0 // monotonic, NOT renderLetters.length — culls splice that and colours would drift
+      const specFor = (slot: Slot): { spec: LetterSpec; render: RenderLetter } => {
+        const t = new PIXI.Text({ text: slot.ch, style: letterStyle(PALETTE[colorSeq++ % PALETTE.length], slot.size) })
+        t.anchor.set(0.5)
+        app.stage.addChild(t)
+        const hw = Math.max(8, t.width * 0.42)
+        const hh = Math.max(8, t.height * 0.4)
+        // Hand-authored hull (font-size units, origin = glyph centre) scaled to px.
+        const colliders = scaleHull(hullForGlyph(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+        return {
+          spec: { colliders, hw, hh, slotX: slot.x, slotY: slot.y },
+          render: { text: t, hw, hh, colliders },
         }
       }
 
-      // Keep the two lines well clear of each other: line 1 is tall, so a tight gap
-      // lets the bouncy settle overlap the lines and tangle letters across them.
-      // Center layout: the two lines sit just above/below the middle. Frame layout: push
-      // them near the top + bottom edges so they wrap AROUND a central element (the blob ring).
-      const gap = line1.size * 0.86
-      const topY = frame ? h * 0.13 : h / 2 - gap
-      const botY = frame ? h * 0.87 : h / 2 + gap
-      buildLine(line1, topY)
-      buildLine(line2, botY)
+      let { slots, fit, sizes } = layout(w, h)
+      let lastSig = layout.signature(w)
+      const specs: LetterSpec[] = []
+      for (const slot of slots) {
+        const { spec, render } = specFor(slot)
+        specs.push(spec)
+        renderLetters.push(render)
+      }
 
       const world: CelebrateWorld = await createCelebrateWorld(specs, w, h, STUCK_DIST * fit, UNGHOST_DIST * fit)
       if (cancelled || !containerRef.current) {
@@ -231,7 +252,7 @@ export function CelebrateBubbles({
       builtWorld = world
       worldRef.current = world
       if (exitingRef.current) exitCelebrate(world) // already asked to exit before the world finished building
-      if (import.meta.env.DEV) (window as unknown as { __cb?: unknown }).__cb = { world, specs } // dev-only debug handle
+      if (import.meta.env.DEV) (window as unknown as { __cb?: unknown }).__cb = { world, specs, app } // dev-only debug handle
 
       // Reduced motion: no rain. Snap every letter onto its slot, upright and still, and put the
       // cage up immediately — there is nothing flying in for it to contain.
@@ -260,6 +281,7 @@ export function CelebrateBubbles({
         let best = -1
         let bestD = Infinity
         for (let i = 0; i < world.letters.length; i++) {
+          if (world.letters[i].discarded) continue // flung and mid-cull — not grabbable
           const p = world.letters[i].body.translation()
           const rot = world.letters[i].body.rotation()
           const c = Math.cos(rot)
@@ -281,6 +303,7 @@ export function CelebrateBubbles({
       }
 
       const onPointerDown = (e: PointerEvent) => {
+        wake() // a paused ticker must resume before anything can be dragged
         const { x, y } = toWorld(e)
         const i = pickLetter(x, y)
         if (i < 0) return // missed all letters — do nothing (background click used to re-scatter, but users tap here to grab a letter)
@@ -331,6 +354,7 @@ export function CelebrateBubbles({
         const tgt = e.target as HTMLElement | null
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return
         debug = !debug
+        wake() // the overlay is drawn in the ticker — toggling it while idle must repaint
         if (import.meta.env.DEV) (window as unknown as { __debug?: boolean }).__debug = debug
       }
       window.addEventListener('keydown', onKey)
@@ -379,14 +403,118 @@ export function CelebrateBubbles({
           debugGfx.clear() // toggled off — clear once, then idle
           debugDrawn = false
         }
+        // Collect flung letters that are done. Returns DESCENDING indices, so splicing the
+        // parallel render array here can't shift an index out from under the loop.
+        const culled = cullDiscarded(world)
+        for (const i of culled) {
+          renderLetters[i].text.destroy()
+          renderLetters.splice(i, 1)
+        }
+
         if (!announcedReady) {
           announcedReady = true
           onReadyRef.current?.() // first painted frame — safe to drop a boot screen now
         }
+
+        // Idle gate: once nothing has moved for a while, STOP the ticker. On a phone this is the
+        // difference between a canvas that animates forever and one that goes quiet.
+        //
+        // `started` is part of the condition on purpose: while the host withholds `play` we never
+        // call stepCelebrate, so settledFrames stays frozen at 0 and could never reach the
+        // threshold — the ticker would spin at 60fps doing nothing for as long as the host waits.
+        if (idleFrames !== false && started && !world.drag && world.settledFrames > idleFrames) {
+          app.ticker.stop()
+        }
       }
+
+      // Restart the ticker on anything that could change the scene. ONE definition, shared by the
+      // pointer handler, the resize observer, and the exiting effect — a second copy is how one of
+      // them ends up not resetting settledFrames and the gate re-fires immediately.
+      const wake = () => {
+        world.settledFrames = 0
+        if (!app.ticker.started) app.ticker.start()
+      }
+      wakeRef.current = wake
+
       app.ticker.add(ticker)
 
+      // ── Resize / rotation ────────────────────────────────────────────────────────────────
+      // The world used to be frozen at its mount size: a rotation left the letters jammed against
+      // stale wall colliders, and the canvas was CSS-stretched rather than re-rendered.
+      let raf = 0
+      const relayout = () => {
+        raf = 0
+        if (cancelled || !containerRef.current) return
+        const nw = Math.max(1, el.clientWidth)
+        const nh = Math.max(1, el.clientHeight)
+        if (nw === world.w && nh === world.h) return // observer fires on no-op changes too
+        wake()
+        app.renderer.resize(nw, nh)
+
+        const next = layout(nw, nh)
+        const sig = layout.signature(nw)
+        // Rescaling the untangle thresholds with the text is what keeps the self-freeing untangle
+        // working at the new size — at a phone's scale, a letter wedged by 48px is off by half a
+        // word, and the fixed threshold would never trip.
+        resizeWorld(world, nw, nh, STUCK_DIST * next.fit, UNGHOST_DIST * next.fit)
+
+        // Re-home is only SAFE when the letters stay inside the new bounds. A width change moves
+        // every slot AND shrinks the wall cage, which resizeWorld has just rebuilt around wherever
+        // the letters currently are — any letter left outside is now trapped behind a wall it
+        // cannot cross, pressing against it forever. So a change in the fitted SIZE (or the line
+        // set) rebuilds and snaps; only a height-only change, which leaves x untouched, re-homes.
+        const sizeChanged = Math.abs((next.sizes[0] ?? 0) - (sizes[0] ?? 0)) > 0.5
+        const structural = sig !== lastSig || next.slots.length !== renderLetters.length || sizeChanged
+        if (structural) {
+          releaseDrag(world) // detach the joint BEFORE freeing the bodies it pins
+          for (let i = renderLetters.length - 1; i >= 0; i--) {
+            renderLetters[i].text.destroy()
+            removeLetter(world, i)
+          }
+          renderLetters.length = 0
+          for (const slot of next.slots) {
+            const { spec, render } = specFor(slot)
+            const i = addLetter(world, spec)
+            renderLetters.push(render)
+            // SNAP home rather than re-raining the phrase on every resize — but only once the
+            // entrance has been released. Before that the letters are deliberately held off-screen
+            // for the rain, and a reflow during a slow load must not assemble them early.
+            if (started) {
+              const b = world.letters[i].body
+              b.setTranslation({ x: slot.x, y: slot.y }, true)
+              b.setRotation(0, true)
+              b.setLinvel({ x: 0, y: 0 }, true)
+              b.setAngvel(0, true)
+            }
+          }
+        } else {
+          // Same structure at a new size: re-home in place. Cheap, and no letter blinks out.
+          next.slots.forEach((slot, i) => {
+            const r = renderLetters[i]
+            if (!r) return
+            r.text.style = letterStyle(r.text.style.fill as number, slot.size)
+            const hw = Math.max(8, r.text.width * 0.42)
+            const hh = Math.max(8, r.text.height * 0.4)
+            r.hw = hw
+            r.hh = hh
+            r.colliders = scaleHull(hullForGlyph(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+            retargetLetter(world, i, slot.x, slot.y)
+          })
+        }
+        slots = next.slots
+        fit = next.fit
+        sizes = next.sizes
+        lastSig = sig
+      }
+      const ro = new ResizeObserver(() => {
+        // Coalesce a burst of observer callbacks (a drag-resize fires many) into one rAF.
+        if (!raf) raf = requestAnimationFrame(relayout)
+      })
+      ro.observe(el)
+
       cleanup = () => {
+        ro.disconnect()
+        if (raf) cancelAnimationFrame(raf)
         el.removeEventListener('pointerdown', onPointerDown)
         el.removeEventListener('pointermove', onPointerMove)
         el.removeEventListener('pointerup', endDrag)

@@ -26,6 +26,8 @@ export {
   retargetLetter,
   scatterLetter,
   addLetter,
+  removeLetter, // remove one body (splice your parallel render array at the same index)
+  cullDiscarded, // collect flung letters that are off-screen or long-since discarded
   resizeWorld, // resize the world + rebuild the enclosure on a viewport / device-rotation change
   armEnclosureNow, // skip the entrance delay when letters start at their final pose (reduced motion)
   // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter grabbed
@@ -68,6 +70,17 @@ export {
 
 // ── Text style (the ONE definition the component and both dev tools render with) ──
 export { FONT_STACK, letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
+
+// ── Layout: slots derived from the LIVE viewport (recomputed on resize/rotation) ──
+export {
+  createLineLayout,
+  type Measure,
+  type Line,
+  type Slot as LayoutSlot,
+  type LayoutResult,
+  type LayoutOptions,
+  type LayoutStrategy,
+} from './layout'
 
 // ── Word-to-word transition planning (pure — pairs with the re-layout primitives) ──
 export { planClaims, type LetterView, type TransitionPlan, type Slot } from './transition'

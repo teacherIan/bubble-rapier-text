@@ -92,6 +92,7 @@ export interface LetterBody {
   wrongFrames: number // consecutive frames out-of-place AND parked (wedged) — the snappy free trigger
   wrongTotal: number // consecutive frames out-of-place at ANY speed — the watchdog free trigger
   arrivedOnce: boolean // has reached its slot ≥once — gates the watchdog so a fly-in (never-arrived) isn't cut short
+  discardFrames: number // frames spent discarded — the cull's backstop for one that never leaves the screen
 }
 
 // A drag is a Rapier revolute "mouse joint": a kinematic anchor at the cursor pinned to the grabbed
@@ -267,6 +268,7 @@ function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: Lett
     wrongFrames: 0,
     wrongTotal: 0,
     arrivedOnce: false,
+    discardFrames: 0,
   }
 }
 
@@ -330,6 +332,7 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
   L.tx = x
   L.ty = y
   L.discarded = false
+  L.discardFrames = 0 // no longer flung — drop its cull lease
   L.wrongFrames = 0 // re-arm stuck detection against the new slot
   L.wrongTotal = 0
   L.arrivedOnce = false // now flying to a NEW slot — disarm the watchdog until it arrives there
@@ -343,7 +346,12 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
 export function scatterLetter(state: CelebrateWorld, index: number): void {
   const L = state.letters[index]
   if (!L) return
+  // Already flung: leave it alone. Re-flinging an airborne letter resets its cull lease
+  // (discardFrames), so a rapid sequence of transitions could keep renewing it forever and it
+  // would never be collected — defeating the backstop below.
+  if (L.discarded) return
   L.discarded = true
+  L.discardFrames = 0
   setLetterPassthrough(L) // collide with nothing, BUT keep mass → gravity still pulls it off-screen
   L.body.enableCcd(false) // no longer needs continuous collision — it's leaving the screen
   L.body.setLinearDamping(0) // 0 so gravity keeps accelerating it off-screen (it won't slow + sleep mid-air)
@@ -351,6 +359,59 @@ export function scatterLetter(state: CelebrateWorld, index: number): void {
   const speed = 700 + Math.random() * 700
   L.body.setLinvel({ x: Math.cos(ang) * speed, y: Math.sin(ang) * speed - 220 }, true) // slight up-bias → flies up, then gravity wins
   L.body.setAngvel((Math.random() - 0.5) * 2 * MAX_SPIN, true)
+}
+
+const CULL_MARGIN = 220 // px beyond the live screen edge before a flung letter is collected
+const DISCARD_CULL_FRAMES = 420 // ~7s discarded, wherever it is — the backstop (see cullDiscarded)
+
+/**
+ * Remove one letter's body from the world.
+ *
+ * The caller MUST splice its own parallel render array at the same index. Both fixups here are
+ * required for correctness, not tidiness: the drag joint must be released BEFORE its body is
+ * removed (freeing a jointed body out from under the solver is undefined), and any live drag on a
+ * LATER letter has its index shifted down by the splice.
+ */
+export function removeLetter(state: CelebrateWorld, index: number): void {
+  const L = state.letters[index]
+  if (!L) return
+  if (state.drag) {
+    if (state.drag.index === index) releaseDrag(state)
+    else if (state.drag.index > index) state.drag.index--
+  }
+  state.world.removeRigidBody(L.body)
+  state.letters.splice(index, 1)
+}
+
+/**
+ * Collect flung letters that are done: off-screen past CULL_MARGIN, or discarded for
+ * DISCARD_CULL_FRAMES wherever they are. Returns the removed indices, DESCENDING, so a caller can
+ * splice its parallel render array without indices shifting under it.
+ *
+ * Bounds are tested against the LIVE state.w/state.h, not the size at mount: after a rotation the
+ * old bounds would either collect letters still on screen or strand ones that already left.
+ *
+ * The frame backstop is what makes the idle gate terminate. Without it a single flung letter that
+ * never crosses an edge — wedged against a wall, or launched with almost no velocity — stays
+ * discarded forever, and `calm` is false for as long as any discarded letter exists, so the ticker
+ * could never stop.
+ */
+export function cullDiscarded(state: CelebrateWorld): number[] {
+  const removed: number[] = []
+  for (let i = state.letters.length - 1; i >= 0; i--) {
+    const L = state.letters[i]
+    if (!L.discarded) continue
+    const p = L.body.translation()
+    const gone =
+      p.x < -CULL_MARGIN || p.x > state.w + CULL_MARGIN || p.y < -CULL_MARGIN || p.y > state.h + CULL_MARGIN
+    if (gone || L.discardFrames > DISCARD_CULL_FRAMES) {
+      removeLetter(state, i)
+      removed.push(i)
+    } else {
+      L.body.wakeUp() // still on screen and still leaving — don't let it doze mid-flight
+    }
+  }
+  return removed
 }
 
 /** Spawn a new letter into the running world (flies in from an edge toward its slot).
@@ -531,6 +592,7 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
     if (i === draggedIndex) continue // driven by the drag spring below
     const L = letters[i]
     if (L.discarded) {
+      L.discardFrames++ // the cull's backstop: see cullDiscarded
       calm = false // still flying off-screen; the host must keep stepping until it is culled
       continue // no spring/untangle — just gravity
     }
