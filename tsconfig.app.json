@@ -31,5 +31,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "demo"]
+  "include": ["src", "demo"],
+  /* Tests are excluded here — they'd pull vitest's types into the app/lib build, which has no
+     business knowing about them. `npm test` type-checks what it runs, and vite.lib.config.ts's
+     dts plugin already excludes them from the emitted .d.ts. */
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx"]
 }

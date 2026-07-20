@@ -26,10 +26,25 @@ export {
   retargetLetter,
   scatterLetter,
   addLetter,
+  removeLetter, // remove one body (splice your parallel render array at the same index)
+  cullDiscarded, // collect flung letters that are off-screen or long-since discarded
+  resizeWorld, // resize the world + rebuild the enclosure on a viewport / device-rotation change
+  armEnclosureNow, // skip the entrance delay when letters start at their final pose (reduced motion)
+  // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter grabbed
+  // by its top edge dangles and swings rather than sliding rigidly
+  startLetterDrag,
+  moveDrag,
+  releaseDrag,
+  // …and the same hinge for bodies YOU add to the world (a mascot, a prop): you own the handle
+  startBodyDrag,
+  moveBodyDrag,
+  endBodyDrag,
   GRAVITY,
   type LetterSpec,
+  type LetterBody,
   type CelebrateWorld,
   type DragState,
+  type MouseJoint,
 } from './celebratePhysics'
 
 // ── Glyph collision hulls + helpers (author / scale / draw) ───────────────────
@@ -37,6 +52,8 @@ export {
   GLYPH_HULLS,
   GLYPH_LIST,
   hullForGlyph,
+  makeHullForGlyph, // bind your OWN hull map once, then pass the 3-arg result down the build path
+  EDITABLE_GLYPHS, // every authored glyph, in dev-tool tab order
   scaleHull,
   strokeHullPx,
   type HullShape,
@@ -51,6 +68,23 @@ export {
   type PxOval,
 } from './glyphHulls'
 
+// ── Text style (the ONE definition the component and both dev tools render with) ──
+export { FONT_STACK, letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
+
+// ── Layout: slots derived from the LIVE viewport (recomputed on resize/rotation) ──
+export {
+  createLineLayout,
+  type Measure,
+  type Line,
+  type Slot as LayoutSlot,
+  type LayoutResult,
+  type LayoutOptions,
+  type LayoutStrategy,
+} from './layout'
+
+// ── Word-to-word transition planning (pure — pairs with the re-layout primitives) ──
+export { planClaims, type LetterView, type TransitionPlan, type Slot } from './transition'
+
 // ── Shared Rapier-world primitives (build your own sims on the same base) ──────
 export {
   createPhysicsWorld,
@@ -59,4 +93,10 @@ export {
   type WallCage,
   type WallCageOptions,
 } from './lib/physics/world'
-export { ensureRapierInitialized } from './lib/physics/rapierInit'
+export {
+  ensureRapierInitialized,
+  // Bring your own Rapier build (raw .wasm, a CDN URL, a vendored copy) instead of the
+  // inlined compat default. Must be called before anything creates a world.
+  setRapierLoader,
+  type RapierLoader,
+} from './lib/physics/rapierInit'

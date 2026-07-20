@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
-import { GLYPH_LIST, GLYPH_HULLS, type HullShape } from './glyphHulls'
+import { GLYPH_LIST, GLYPH_HULLS, EDITABLE_GLYPHS, type HullShape } from './glyphHulls'
+import { letterStyle } from './letterStyle'
 
 // Interactive editor for the letter collision hulls. The glyph is rendered in the REAL
 // Cherry Bomb One face (PIXI, anchor 0.5 — identical origin to the live component), and you
@@ -9,7 +10,6 @@ import { GLYPH_LIST, GLYPH_HULLS, type HullShape } from './glyphHulls'
 // (origin = glyph centre, +y down), so what you place here drops straight into glyphHulls.ts.
 // Everything is mirrored to localStorage + a live code box; not linked anywhere (dev route).
 
-const FONT_STACK = '"Cherry Bomb One", system-ui, sans-serif'
 const BOX = 720 // editor canvas is a fixed square (deterministic — no viewport races)
 const CX = BOX / 2
 const CY = BOX / 2
@@ -87,7 +87,12 @@ function toCode(hulls: Hulls): string {
         return `{ t: 'oval', x: ${r3(s.x)}, y: ${r3(s.y)}, rx: ${r3(s.rx)}, ry: ${r3(s.ry)}, a: ${r3(s.a)} }`
     }
   }
-  const lines = GLYPH_LIST.map((g) => {
+  // Serialise the union of the editor's tab order and EVERY authored glyph — not GLYPH_LIST alone.
+  // Keying the export off GLYPH_LIST silently dropped any hull for a glyph outside the demo phrase,
+  // so re-baking after tweaking one letter would delete all the others. That is precisely how this
+  // library and its first consumer drifted into two different hull sets.
+  const keys = [...new Set<string>([...GLYPH_LIST, ...Object.keys(hulls)])]
+  const lines = keys.map((g) => {
     const arr = hulls[g] ?? []
     return `  ${/^[A-Za-z]$/.test(g) ? g : `'${g}'`}: [\n${arr.map((s) => `    ${fmt(s)},`).join('\n')}\n  ],`
   })
@@ -119,13 +124,13 @@ function invRotLocal(a: number, dx: number, dy: number) {
 
 const DEAD_ZONE = 0.012 // a click within this (in units) only selects; drag beyond to move
 
-export function GlyphHullEditor() {
+export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly string[] } = {}) {
   const pixiHostRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<PIXI.Text | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
   const [gi, setGi] = useState(0)
-  const glyph = GLYPH_LIST[gi]
+  const glyph = glyphs[gi]
   const [hulls, setHulls] = useState<Hulls>(() => loadHulls())
   const [sel, setSel] = useState(-1)
   const dragRef = useRef<DragMode | null>(null)
@@ -150,7 +155,7 @@ export function GlyphHullEditor() {
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(hulls))
-      if (import.meta.env.DEV) (window as unknown as { __glyphHulls?: Hulls }).__glyphHulls = hulls // dev-only read-out (prod uses Copy code)
+      if (import.meta.env?.DEV) (window as unknown as { __glyphHulls?: Hulls }).__glyphHulls = hulls // dev-only read-out (prod uses Copy code)
     } catch {
       /* ignore */
     }
@@ -205,14 +210,15 @@ export function GlyphHullEditor() {
       }
 
       const t = new PIXI.Text({
-        text: GLYPH_LIST[0],
-        style: new PIXI.TextStyle({
-          fontFamily: FONT_STACK,
-          fontSize: UNIT,
-          fill: 0x4d9de0,
-          stroke: { color: 0xffffff, width: Math.max(2, UNIT * 0.045) },
-          dropShadow: { color: 0x232347, alpha: 0.34, blur: 3, distance: UNIT * 0.085, angle: Math.PI / 2 },
-        }),
+        // Read through the ref: this effect builds the PIXI app ONCE, and the [glyph] effect below
+        // syncs the text immediately after, so the initial value is cosmetic. Depending on `glyphs`
+        // here would tear down and rebuild the whole renderer whenever the glyph set changed.
+        text: glyphRef.current,
+        // The SHARED style — the whole point of the editor is that the glyph you trace on is
+        // pixel-for-pixel the one the live component renders. Stroke and shadow both inflate the
+        // text's bounding box, and the collider origin is that box's centre, so any drift here
+        // silently offsets every hull authored afterwards.
+        style: letterStyle(0x4d9de0, UNIT),
       })
       t.anchor.set(0.5)
       t.resolution = 2
@@ -365,8 +371,8 @@ export function GlyphHullEditor() {
       else if (e.key === 'c') addCap()
       else if (e.key === 'x') addRect()
       else if (e.key === 'v') addOval()
-      else if (e.key === 'ArrowRight') setGi((i) => (i + 1) % GLYPH_LIST.length)
-      else if (e.key === 'ArrowLeft') setGi((i) => (i - 1 + GLYPH_LIST.length) % GLYPH_LIST.length)
+      else if (e.key === 'ArrowRight') setGi((i) => (i + 1) % glyphs.length)
+      else if (e.key === 'ArrowLeft') setGi((i) => (i - 1 + glyphs.length) % glyphs.length)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -518,7 +524,7 @@ export function GlyphHullEditor() {
       {/* controls */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {GLYPH_LIST.map((g, i) => (
+          {glyphs.map((g, i) => (
             <button
               key={g + i}
               onClick={() => {

@@ -19,6 +19,12 @@ export function DemoApp() {
   const [view, setView] = useState<View>('celebrate')
   const [frame, setFrame] = useState(false)
   const [exiting, setExiting] = useState(false)
+  // `play` gates the rain so a host can finish its own intro first. Exposed here because the demo
+  // is the only in-repo consumer of the public API — a prop nothing drives is a prop nothing tests.
+  const [play, setPlay] = useState(true)
+  // Two phrases to morph between — the whole point of the live `phrase` prop. Shared letters
+  // (C, E, L, e, r, a, t) glide across; the rest scatter and fly in.
+  const [alt, setAlt] = useState(false)
   const [nonce, setNonce] = useState(0)
 
   const replay = () => {
@@ -48,6 +54,11 @@ export function DemoApp() {
               <input type="checkbox" checked={frame} onChange={(e) => { setFrame(e.target.checked); replay() }} />
               frame
             </label>
+            <label style={chkStyle} title="Hold the letters at their spawn edges (they must stay OFF-SCREEN, not pile at 0,0)">
+              <input type="checkbox" checked={!play} onChange={(e) => { setPlay(!e.target.checked); replay() }} />
+              hold
+            </label>
+            <button onClick={() => setAlt((v) => !v)} style={tabStyle} title="Morph to the other phrase (live, no remount)">Morph</button>
             <button onClick={replay} style={tabStyle}>Replay</button>
             <button onClick={() => setExiting(true)} style={tabStyle}>Exit ⬇</button>
           </div>
@@ -59,7 +70,13 @@ export function DemoApp() {
 
       <div style={stageStyle}>
         {view === 'celebrate' && (
-          <CelebrateBubbles key={`cb-${nonce}-${frame}`} frame={frame} exiting={exiting} />
+          <CelebrateBubbles
+            key={`cb-${nonce}-${frame}`}
+            frame={frame}
+            exiting={exiting}
+            play={play}
+            phrase={alt ? [{ text: 'Great', weight: 1 }, { text: 'letter craft', weight: 0.5 }] : undefined}
+          />
         )}
         {view === 'editor' && (
           <div key="editor" style={{ position: 'absolute', inset: 0, paddingTop: NAV_H, boxSizing: 'border-box' }}>
