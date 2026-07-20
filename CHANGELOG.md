@@ -26,7 +26,10 @@ Makes the library consumable at all, and adds the pieces a second consumer needs
   world, the wall cage, and the untangle thresholds all follow the viewport.
 - **Idle gate** — `settledFrames` on the world, and the component stops its PIXI ticker after
   `idleFrames` calm frames (default 110, `false` to disable), waking on pointer, resize, or nav.
-- **`planClaims`** (`src/transition.ts`) — the matching half of the re-layout primitives.
+- **`planClaims`** (`src/transition.ts`) — the matching half of the re-layout primitives; now
+  generic over the slot type.
+- **Live `phrase` / `layout`** — changing either MORPHS the current word into the new one (matching
+  glyphs glide across, the rest scatter, missing ones fly in) rather than cutting to it.
 - New props: `play`, `phrase`, `layout`, `idleFrames`, `reducedMotion`, `maxResolution`, `onReady`,
   `onError`. All defaulted.
 - `armEnclosureNow`, `removeLetter`, `cullDiscarded`, `setRapierLoader`, and the `letterStyle`
