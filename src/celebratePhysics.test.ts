@@ -6,6 +6,8 @@ import {
   scatterLetter,
   retargetLetter,
   exitCelebrate,
+  resizeWorld,
+  removeWalls,
   type CelebrateWorld,
   type LetterSpec,
 } from './celebratePhysics'
@@ -122,5 +124,48 @@ describe('armEnclosureNow', () => {
     armEnclosureNow(w)
     expect(w.walls.length).toBe(n)
     expect(w.floorBody).toBe(floor)
+  })
+})
+
+describe('wall-cage lifetime', () => {
+  // createWallCage returns `floor: bottom`, and `bottom` is also an element of `walls`. Anything
+  // that frees the floor on its own must drop it from `walls` too, or the next teardown frees it
+  // twice — which panics the Rapier WASM module rather than throwing something catchable.
+  it('survives exit followed by a resize (double-free of the floor)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    expect(w.walls).toContain(w.floorBody)
+
+    exitCelebrate(w)
+    expect(w.floorBody).toBeNull()
+    expect(w.walls).toHaveLength(3) // floor spliced out — the other three survive
+
+    // The shipped component calls this from its ResizeObserver; a phone URL-bar collapse is enough.
+    expect(() => resizeWorld(w, 500, 400, 60, 20)).not.toThrow()
+    stepCelebrate(w, DT)
+  })
+
+  it('survives exit followed by removeWalls', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    exitCelebrate(w)
+    expect(() => removeWalls(w)).not.toThrow()
+  })
+
+  it('survives removeWalls followed by exit (the reverse order)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    removeWalls(w)
+    expect(() => exitCelebrate(w)).not.toThrow()
+  })
+
+  it('resizes repeatedly without freeing a wall twice', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 5; i++) {
+      expect(() => resizeWorld(w, 400 + i * 50, 300 + i * 40, 60, 20)).not.toThrow()
+      stepCelebrate(w, DT)
+    }
+    expect(w.walls).toHaveLength(4)
   })
 })

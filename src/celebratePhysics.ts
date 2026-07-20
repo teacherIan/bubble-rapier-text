@@ -536,6 +536,13 @@ export function exitCelebrate(state: CelebrateWorld): void {
   // floor is never created (nothing to fall back onto).
   if (state.floorBody) {
     state.world.removeRigidBody(state.floorBody)
+    // The floor is ALSO an element of state.walls (createWallCage returns `floor: bottom`, and
+    // `bottom` is in `walls`). Drop it, or the next resizeWorld walks state.walls and removes this
+    // body a SECOND time — a double free that panics the Rapier WASM module and takes the whole
+    // canvas with it, unrecoverable short of a remount. Reachable in the shipped component: exit,
+    // then any resize (a phone URL-bar collapse is enough).
+    const i = state.walls.indexOf(state.floorBody)
+    if (i >= 0) state.walls.splice(i, 1)
     state.floorBody = null
   }
   state.wallsAdded = true

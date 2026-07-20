@@ -252,7 +252,7 @@ export function CelebrateBubbles({
       builtWorld = world
       worldRef.current = world
       if (exitingRef.current) exitCelebrate(world) // already asked to exit before the world finished building
-      if (import.meta.env.DEV) (window as unknown as { __cb?: unknown }).__cb = { world, specs, app } // dev-only debug handle
+      if (import.meta.env?.DEV) (window as unknown as { __cb?: unknown }).__cb = { world, specs, app } // dev-only debug handle
 
       // Reduced motion: no rain. Snap every letter onto its slot, upright and still, and put the
       // cage up immediately — there is nothing flying in for it to contain.
@@ -355,7 +355,7 @@ export function CelebrateBubbles({
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return
         debug = !debug
         wake() // the overlay is drawn in the ticker — toggling it while idle must repaint
-        if (import.meta.env.DEV) (window as unknown as { __debug?: boolean }).__debug = debug
+        if (import.meta.env?.DEV) (window as unknown as { __debug?: boolean }).__debug = debug
       }
       window.addEventListener('keydown', onKey)
 
@@ -524,7 +524,7 @@ export function CelebrateBubbles({
         app.destroy({ removeView: true }, { children: true })
         world.world.free()
         worldRef.current = null
-        if (import.meta.env.DEV) {
+        if (import.meta.env?.DEV) {
           delete (window as unknown as { __cb?: unknown }).__cb // don't pin the freed world
           delete (window as unknown as { __debug?: boolean }).__debug
         }

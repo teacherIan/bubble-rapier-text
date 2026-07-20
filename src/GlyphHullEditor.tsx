@@ -155,7 +155,7 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(hulls))
-      if (import.meta.env.DEV) (window as unknown as { __glyphHulls?: Hulls }).__glyphHulls = hulls // dev-only read-out (prod uses Copy code)
+      if (import.meta.env?.DEV) (window as unknown as { __glyphHulls?: Hulls }).__glyphHulls = hulls // dev-only read-out (prod uses Copy code)
     } catch {
       /* ignore */
     }
