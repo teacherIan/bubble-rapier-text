@@ -4,7 +4,10 @@
 // the world: per-letter slot/upright springs, the ghost-home untangle, and the
 // grab-point drag spring. State is a plain object so the worker can drive it.
 import type RAPIER from '@dimforge/rapier2d-compat'
-import { createPhysicsWorld, createWallCage, type WallCage } from '@/lib/physics/world'
+// NB: relative, NOT the '@/' alias. package.json `exports` points at this TypeScript source, so a
+// consumer's bundler resolves these specifiers itself — and it has no idea what '@' means. Worse, an
+// app that defines its own '@ → ./src' alias resolves it into ITS OWN tree, silently.
+import { createPhysicsWorld, createWallCage, type WallCage } from './lib/physics/world'
 import type { PxShape } from './glyphHulls'
 
 // --- physics tuning (pixel units; world.lengthUnit = 100) ---

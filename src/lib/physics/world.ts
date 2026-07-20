@@ -1,4 +1,7 @@
-import RAPIER from '@dimforge/rapier2d-compat'
+// Type-only: every RAPIER reference below is a type annotation, and the runtime namespace arrives
+// via ensureRapierInitialized(). A value import here would pull the compat build's inlined WASM into
+// the bundle even for a consumer who injected their own loader (see setRapierLoader).
+import type RAPIER from '@dimforge/rapier2d-compat'
 import { ensureRapierInitialized } from './rapierInit'
 
 // Shared Rapier-world primitives. Pure (no React), realm-portable — these run on the

@@ -71,4 +71,10 @@ export {
   type WallCage,
   type WallCageOptions,
 } from './lib/physics/world'
-export { ensureRapierInitialized } from './lib/physics/rapierInit'
+export {
+  ensureRapierInitialized,
+  // Bring your own Rapier build (raw .wasm, a CDN URL, a vendored copy) instead of the
+  // inlined compat default. Must be called before anything creates a world.
+  setRapierLoader,
+  type RapierLoader,
+} from './lib/physics/rapierInit'
