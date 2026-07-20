@@ -66,6 +66,9 @@ export {
   type PxOval,
 } from './glyphHulls'
 
+// ── Word-to-word transition planning (pure — pairs with the re-layout primitives) ──
+export { planClaims, type LetterView, type TransitionPlan, type Slot } from './transition'
+
 // ── Shared Rapier-world primitives (build your own sims on the same base) ──────
 export {
   createPhysicsWorld,
