@@ -23,11 +23,11 @@ export interface LetterView {
   discarded: boolean
 }
 
-export interface TransitionPlan {
+export interface TransitionPlan<S extends Slot = Slot> {
   /** Indices of letters claimed by a slot (each appears once). Everything else should be scattered. */
   claimed: Set<number>
   /** Per target slot: the claimed survivor's index, or -1 if a fresh letter must be spawned. */
-  plan: { slot: Slot; survivor: number }[]
+  plan: { slot: S; survivor: number }[]
 }
 
 /**
@@ -40,7 +40,7 @@ export interface TransitionPlan {
  * Greedy nearest-first, not a global optimal assignment. For the handful of letters a wordmark has,
  * the difference is invisible in motion and the greedy pass is trivial to reason about.
  */
-export function planClaims(letters: LetterView[], slots: Slot[]): TransitionPlan {
+export function planClaims<S extends Slot>(letters: LetterView[], slots: S[]): TransitionPlan<S> {
   const claimed = new Set<number>()
   const plan = slots.map((slot) => {
     let best = -1

@@ -15,12 +15,15 @@ import {
   addLetter,
   retargetLetter,
   resizeWorld,
+  removeWalls,
+  scatterLetter,
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
 import { GLYPH_HULLS, makeHullForGlyph, scaleHull, strokeHullPx, type HullShape, type PxShape } from './glyphHulls'
 import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
+import { planClaims, type LetterView } from './transition'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
 // bubble-letter backed by a Rapier rigid body whose collider is a HAND-AUTHORED hull of
@@ -63,6 +66,7 @@ const MAX_SUBSTEPS = 3
 const SPIRAL_CLAMP = 0.25
 
 interface RenderLetter {
+  ch: string // the glyph — needed to plan a word-to-word transition (which live letter claims which new slot)
   text: PIXI.Text
   hw: number // glyph half-extents — the grab box
   hh: number
@@ -141,21 +145,26 @@ export function CelebrateBubbles({
   onErrorRef.current = onError
   // Published by the build effect so the `exiting` effect below can restart a stopped ticker.
   const wakeRef = useRef<(() => void) | null>(null)
+  // `phrase` and `layout` are LIVE: changing either morphs the current word into the new one
+  // (matching glyphs glide across, the rest scatter, missing ones fly in). The build effect reads
+  // these refs (so a change mid-build is honoured) and publishes the morph through transitionRef.
+  const phraseRef = useRef(phrase)
+  phraseRef.current = phrase
+  const layoutPropRef = useRef(layoutProp)
+  layoutPropRef.current = layoutProp
+  const transitionRef = useRef<(() => void) | null>(null)
 
   // The world is built ONCE on mount (see the big effect below), so these props are read from that
-  // first closure and later changes are silently ignored. Changing `phrase` and seeing nothing
-  // happen is the first mistake anyone makes, and it looks exactly like a bug in this library — so
-  // say so, loudly, in dev. Remount with a `key` to change them until a live word-to-word
-  // transition exists (planClaims is the planner half; the orchestrator is not ported yet).
-  const mountProps = useRef({ phrase, hulls, palette, layout: layoutProp, frame, position })
+  // first closure and later changes are silently ignored. Changing one and seeing nothing happen
+  // looks exactly like a bug in this library, so say so in dev. (`phrase` and `layout` are NOT here
+  // — they are live: changing either morphs the word. `exiting` and `play` are live too.)
+  const mountProps = useRef({ hulls, palette, frame, position })
   if (import.meta.env?.DEV) {
     const m = mountProps.current
     const changed = (
       [
-        ['phrase', m.phrase !== phrase],
         ['hulls', m.hulls !== hulls],
         ['palette', m.palette !== palette],
-        ['layout', m.layout !== layoutProp],
         ['frame', m.frame !== frame],
         ['position', m.position !== position],
       ] as const
@@ -167,7 +176,7 @@ export function CelebrateBubbles({
         `[bubble-rapier-text] ${changed.join(', ')} changed after mount and will be IGNORED — the ` +
           'scene is built once. Remount with a different React `key` to apply it.',
       )
-      mountProps.current = { phrase, hulls, palette, layout: layoutProp, frame, position } // warn once per change
+      mountProps.current = { hulls, palette, frame, position } // warn once per change
     }
   }
 
@@ -184,6 +193,13 @@ export function CelebrateBubbles({
   useEffect(() => {
     if (play) wakeRef.current?.()
   }, [play])
+
+  // Live `phrase` / `layout`: on a change, morph the current word into the new one. syncLayout
+  // guards on the layout SIGNATURE, so a consumer re-passing an equal phrase as a fresh array each
+  // render is a no-op rather than a churn; it also no-ops until the async build has published it.
+  useEffect(() => {
+    transitionRef.current?.()
+  }, [phrase, layoutProp])
 
   useEffect(() => {
     const el = containerRef.current
@@ -239,6 +255,9 @@ export function CelebrateBubbles({
       app.canvas.style.height = '100%'
       el.appendChild(app.canvas)
       builtApp = app
+      // Paint by zIndex so a transition can drop scattered debris (0) BEHIND the forming word (1),
+      // never over it. Cheap: PIXI only re-sorts when a child's zIndex actually changes.
+      app.stage.sortableChildren = true
 
       // Measure through PIXI's own CanvasTextMetrics, not a raw 2D context: the raw context does
       // not reliably resolve the loaded web face (it silently falls back to the system stack), so it
@@ -259,14 +278,17 @@ export function CelebrateBubbles({
       // style with no fill. Fall back rather than render invisible letters.
       const colors = palette.length ? palette : PALETTE
 
-      const layout: LayoutStrategy =
-        layoutProp ??
+      // Built from the REFS, not the mount-time props, so a phrase/layout change during the async
+      // build (slow font load) is picked up rather than lost. syncLayout() below reconciles it.
+      const buildLayout = (): LayoutStrategy =>
+        layoutPropRef.current ??
         createLineLayout({
-          lines: phrase ?? DEFAULT_LINES,
+          lines: phraseRef.current ?? DEFAULT_LINES,
           measure,
           baseSize: BASE_SIZE,
           frame,
         })
+      let layout: LayoutStrategy = buildLayout()
 
       // ONE build path for a letter, shared by the initial build, a resize rebuild, and any future
       // transition spawn. Divergent build paths are how a letter ends up with a collider that does
@@ -281,10 +303,21 @@ export function CelebrateBubbles({
         const hh = Math.max(8, t.height * 0.4)
         // Hand-authored hull (font-size units, origin = glyph centre) scaled to px.
         const colliders = scaleHull(hullFor(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+        t.zIndex = 1 // active letters paint in FRONT; scattered debris is dropped to 0 in a transition
         return {
           spec: { colliders, hw, hh, slotX: slot.x, slotY: slot.y },
-          render: { text: t, hw, hh, colliders },
+          render: { ch: slot.ch, text: t, hw, hh, colliders },
         }
+      }
+
+      // Re-fit an existing render letter to a (possibly new-sized) slot: restyle at the slot size,
+      // recompute the grab box and hull in place. Shared by the resize re-home and the transition
+      // survivor path — the glyph itself is unchanged, so its Text is reused rather than rebuilt.
+      const refitLetter = (r: RenderLetter, slot: Slot): void => {
+        r.text.style = letterStyle(r.text.style.fill as number, slot.size)
+        r.hw = Math.max(8, r.text.width * 0.42)
+        r.hh = Math.max(8, r.text.height * 0.4)
+        r.colliders = scaleHull(hullFor(slot.ch, r.hw / slot.size, r.hh / slot.size), slot.size)
       }
 
       let { slots, fit, sizes } = layout(w, h)
@@ -485,6 +518,71 @@ export function CelebrateBubbles({
       }
       wakeRef.current = wake
 
+      // ── Word-to-word transition (the live `phrase` / `layout` hand-off) ──────────────────────
+      // Reuses matching glyphs, flings the rest off, flies missing ones in — the animated morph
+      // that turns one word into another rather than cutting to it. planClaims (pure) decides which
+      // live letter claims which new slot; this coordinates that decision across physics + render.
+      const transitionTo = (nextLayout: LayoutStrategy, nextSig: string): void => {
+        const next = nextLayout(world.w, world.h)
+        wake() // the glide/scatter/fly-in all need the loop running
+        releaseDrag(world) // a held letter must not be scattered while still joint-pinned to the cursor
+        removeWalls(world) // open every edge so flung letters exit and spawned letters fly in freely
+        // Rescale the untangle thresholds to the new fit — a longer phrase fits smaller, and a
+        // fixed 48px "wedged" threshold would never trip at a quarter of the size.
+        world.stuckDist = STUCK_DIST * next.fit
+        world.unghostDist = UNGHOST_DIST * next.fit
+
+        const view: LetterView[] = world.letters.map((L, i) => {
+          const p = L.body.translation()
+          return { ch: renderLetters[i].ch, x: p.x, y: p.y, discarded: L.discarded }
+        })
+        const { claimed, plan } = planClaims(view, next.slots)
+
+        // Survivors: reuse the matching glyph — re-fit to the new size, glide to the new slot, keep
+        // it in front. (Indices below refer to the pre-spawn arrays; the spawn loop only appends.)
+        for (const { slot, survivor } of plan) {
+          if (survivor < 0) continue
+          refitLetter(renderLetters[survivor], slot)
+          retargetLetter(world, survivor, slot.x, slot.y)
+          renderLetters[survivor].text.zIndex = 1
+        }
+        // Unclaimed: fling off-screen, dropped BEHIND the forming word so debris never paints over it.
+        for (let i = 0; i < world.letters.length; i++) {
+          if (claimed.has(i)) continue
+          scatterLetter(world, i)
+          renderLetters[i].text.zIndex = 0
+        }
+        // Missing: a fresh letter flies in from an edge (specFor + addLetter keep both arrays aligned).
+        for (const { slot, survivor } of plan) {
+          if (survivor >= 0) continue
+          const { spec, render } = specFor(slot)
+          addLetter(world, spec)
+          renderLetters.push(render)
+        }
+
+        layout = nextLayout
+        slots = next.slots
+        fit = next.fit
+        sizes = next.sizes
+        lastSig = nextSig
+      }
+
+      // Rebuild the layout from the current props and morph to it — UNLESS the words are unchanged
+      // (a consumer re-passing an equal phrase as a fresh array each render must not churn). Guarding
+      // on the signature, not identity, is what makes a live `phrase` prop safe.
+      const syncLayout = (): void => {
+        const nextLayout = buildLayout()
+        const nextSig = nextLayout.signature(world.w)
+        if (nextSig === lastSig) {
+          layout = nextLayout // adopt the new fn (its measure closure is current) without morphing
+          return
+        }
+        transitionTo(nextLayout, nextSig)
+      }
+      transitionRef.current = syncLayout
+      // Reconcile a phrase/layout change that landed DURING the async build (no-op if unchanged).
+      syncLayout()
+
       app.ticker.add(ticker)
 
       // ── Resize / rotation ────────────────────────────────────────────────────────────────
@@ -550,12 +648,7 @@ export function CelebrateBubbles({
           next.slots.forEach((slot, i) => {
             const r = renderLetters[i]
             if (!r) return
-            r.text.style = letterStyle(r.text.style.fill as number, slot.size)
-            const hw = Math.max(8, r.text.width * 0.42)
-            const hh = Math.max(8, r.text.height * 0.4)
-            r.hw = hw
-            r.hh = hh
-            r.colliders = scaleHull(hullFor(slot.ch, hw / slot.size, hh / slot.size), slot.size)
+            refitLetter(r, slot)
             retargetLetter(world, i, slot.x, slot.y)
           })
         }

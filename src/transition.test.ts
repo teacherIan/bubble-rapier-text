@@ -36,4 +36,14 @@ describe('planClaims', () => {
     expect(plan[0].survivor).toBe(0) // slot near 5 → letter at 0
     expect(plan[1].survivor).toBe(1) // slot near 95 → letter at 100
   })
+
+  it('preserves a RICHER slot type through the plan (generic over Slot)', () => {
+    // The orchestrator passes layout slots that carry a `size`; planClaims must hand them back
+    // intact, not widened to the bare {ch,x,y}. If this regresses, the caller loses `size` and
+    // every survivor re-fits to NaN.
+    type Sized = { ch: string; x: number; y: number; size: number }
+    const slots: Sized[] = [{ ch: 'a', x: 0, y: 0, size: 42 }]
+    const { plan } = planClaims([L('a', 1, 1)], slots)
+    expect(plan[0].slot.size).toBe(42)
+  })
 })
