@@ -337,6 +337,13 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
   L.wrongTotal = 0
   L.arrivedOnce = false // now flying to a NEW slot — disarm the watchdog until it arrives there
   setLetterSolid(L, true) // ensure solid (it may have been mid-ghost from the untangle)
+  // Undo what scatterLetter did to a flung body. This function RECLAIMS a letter (it clears
+  // `discarded` above), so it has to hand back one that behaves like a fresh one. Without the
+  // damping restore a reclaimed letter oscillates around its slot forever instead of settling —
+  // which also means `calm` is never true, so the idle gate can never fire and the host's ticker
+  // never stops. Without CCD it can tunnel through a wall on a fast fly-in.
+  L.body.setLinearDamping(LINEAR_DAMPING)
+  L.body.enableCcd(true)
 }
 
 /** Fling a letter off-screen: kill its homing spring (discarded) and give it a strong random velocity

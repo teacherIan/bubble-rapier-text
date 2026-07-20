@@ -169,3 +169,25 @@ describe('wall-cage lifetime', () => {
     expect(w.walls).toHaveLength(4)
   })
 })
+
+describe('reclaiming a flung letter', () => {
+  it('restores damping so it settles, and the idle gate can fire again', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 20; i++) stepCelebrate(w, DT)
+    expect(w.settledFrames).toBeGreaterThan(0)
+
+    // Fling it, then claim it back — scatterLetter zeroes linear damping so gravity can carry the
+    // letter off-screen, and retargetLetter must hand back a body that behaves like a fresh one.
+    scatterLetter(w, 0)
+    stepCelebrate(w, DT)
+    retargetLetter(w, 0, 400, 300)
+    expect(w.letters[0].discarded).toBe(false)
+    expect(w.letters[0].body.linearDamping()).toBeGreaterThan(0)
+
+    // It must actually come to rest — without the restore it oscillates forever and `calm` is
+    // never true, so the host's ticker could never stop.
+    for (let i = 0; i < 600; i++) stepCelebrate(w, DT)
+    expect(w.settledFrames).toBeGreaterThan(0)
+  })
+})
