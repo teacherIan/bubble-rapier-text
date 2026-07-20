@@ -110,6 +110,30 @@ describe('the merged hull set', () => {
   })
 })
 
+describe('alphabet coverage', () => {
+  const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+  const LOWER = 'abcdefghijklmnopqrstuvwxyz'.split('')
+
+  it('has an authored hull for every letter A–Z and a–z', () => {
+    const missing = [...UPPER, ...LOWER].filter((ch) => !GLYPH_HULLS[ch]?.length)
+    expect(missing, `unauthored glyphs would fall back to a generic ball: ${missing.join('')}`).toEqual([])
+  })
+
+  it('sizes every letter plausibly — no hull collapsed or ballooned', () => {
+    // A hull far off the em box means the derivation went wrong for that glyph. Generous
+    // bounds: this catches a broken transform, not fine-tuning (that is the editor's job).
+    for (const ch of [...UPPER, ...LOWER]) {
+      for (const s of GLYPH_HULLS[ch]) {
+        const extent = s.t === 'ball' ? s.r : s.t === 'oval' ? Math.max(s.rx, s.ry) : s.t === 'cap' ? s.r + s.h : Math.max(s.hx, s.hy)
+        expect(extent, `${ch} extent ${extent}`).toBeGreaterThan(0.05)
+        expect(extent, `${ch} extent ${extent}`).toBeLessThan(0.75)
+        expect(Math.abs(s.x), `${ch} x offset`).toBeLessThan(0.5)
+        expect(Math.abs(s.y), `${ch} y offset`).toBeLessThan(0.5)
+      }
+    }
+  })
+})
+
 describe('GLYPH_HULLS data', () => {
   it('has no empty hulls (an empty array silently degrades to the ball fallback)', () => {
     for (const [ch, shapes] of Object.entries(GLYPH_HULLS)) {

@@ -280,6 +280,44 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
     { t: 'cap', x: -0.184, y: 0.201, r: 0.1, h: 0.125, a: -0.811 },
   ],
   D: [{ t: 'ball', x: -0.062, y: -0.016, r: 0.344 }],
+
+  // ── The rest of A–Z, so the engine can set ANY word ───────────────────────────────────────
+  // DERIVED, not hand-traced: each glyph's ink bounding box is read from the Cherry Bomb One
+  // outlines and mapped into this coordinate frame by a transform fitted against the 20
+  // single-primitive hulls above (they approximate a whole glyph, so they calibrate the map).
+  // The fit reproduces those hand-placed hulls to within ~0.02u — about 2% of the glyph — which
+  // is inside hand-authoring variance, so these sit in the same coarse idiom rather than the
+  // spirograph the old circle-packer produced.
+  //
+  // One primitive each, deliberately: a ball where the ink box is roughly square, an
+  // axis-aligned oval otherwise. Same choice `g` makes — one ball spanning bowl AND descender.
+  // Physics only needs a blob that reads as the letter and slides instead of wedging.
+  //
+  // Refine any of them by eye in the editor (they are ordinary data) and re-bake. Verify the
+  // whole set at a glance with the lab's ?all=1&hull=1 contact sheet.
+  F: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.288, ry: 0.378, a: 0 }],
+  G: [{ t: 'ball', x: -0.041, y: -0.007, r: 0.355 }],
+  H: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.372 }],
+  I: [{ t: 'oval', x: -0.041, y: -0.008, rx: 0.229, ry: 0.377, a: 0 }],
+  K: [{ t: 'oval', x: -0.041, y: -0.006, rx: 0.298, ry: 0.378, a: 0 }],
+  N: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.365 }],
+  O: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.37 }],
+  P: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.35 }],
+  Q: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.37 }],
+  U: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.377 }],
+  V: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.379 }],
+  W: [{ t: 'oval', x: -0.041, y: 0.008, rx: 0.433, ry: 0.363, a: 0 }],
+  X: [{ t: 'ball', x: -0.04, y: -0.006, r: 0.373 }],
+  Y: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.366 }],
+  Z: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.348 }],
+  f: [{ t: 'oval', x: -0.038, y: -0.007, rx: 0.254, ry: 0.377, a: 0 }],
+  j: [{ t: 'oval', x: -0.066, y: 0.066, rx: 0.171, ry: 0.487, a: 0 }],
+  m: [{ t: 'oval', x: -0.041, y: 0.099, rx: 0.339, ry: 0.264, a: 0 }],
+  p: [{ t: 'ball', x: -0.041, y: 0.179, r: 0.312 }],
+  q: [{ t: 'ball', x: -0.041, y: 0.179, r: 0.312 }],
+  v: [{ t: 'ball', x: -0.04, y: 0.108, r: 0.263 }],
+  x: [{ t: 'ball', x: -0.041, y: 0.11, r: 0.246 }],
+  z: [{ t: 'ball', x: -0.041, y: 0.108, r: 0.241 }],
 }
 
 /**
