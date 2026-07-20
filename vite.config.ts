@@ -17,4 +17,10 @@ export default defineConfig({
     },
   },
   base: './',
+  build: {
+    // NOT dist/ — that belongs to `npm run build:lib`, and package.json `exports` point into it.
+    // Sharing the directory means the demo build (emptyOutDir defaults true) deletes the published
+    // bundle, so whichever ran last wins. CI runs both.
+    outDir: 'demo-dist',
+  },
 })

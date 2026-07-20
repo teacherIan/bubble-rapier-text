@@ -19,6 +19,9 @@ export function DemoApp() {
   const [view, setView] = useState<View>('celebrate')
   const [frame, setFrame] = useState(false)
   const [exiting, setExiting] = useState(false)
+  // `play` gates the rain so a host can finish its own intro first. Exposed here because the demo
+  // is the only in-repo consumer of the public API — a prop nothing drives is a prop nothing tests.
+  const [play, setPlay] = useState(true)
   const [nonce, setNonce] = useState(0)
 
   const replay = () => {
@@ -48,6 +51,10 @@ export function DemoApp() {
               <input type="checkbox" checked={frame} onChange={(e) => { setFrame(e.target.checked); replay() }} />
               frame
             </label>
+            <label style={chkStyle} title="Hold the letters at their spawn edges (they must stay OFF-SCREEN, not pile at 0,0)">
+              <input type="checkbox" checked={!play} onChange={(e) => { setPlay(!e.target.checked); replay() }} />
+              hold
+            </label>
             <button onClick={replay} style={tabStyle}>Replay</button>
             <button onClick={() => setExiting(true)} style={tabStyle}>Exit ⬇</button>
           </div>
@@ -59,7 +66,7 @@ export function DemoApp() {
 
       <div style={stageStyle}>
         {view === 'celebrate' && (
-          <CelebrateBubbles key={`cb-${nonce}-${frame}`} frame={frame} exiting={exiting} />
+          <CelebrateBubbles key={`cb-${nonce}-${frame}`} frame={frame} exiting={exiting} play={play} />
         )}
         {view === 'editor' && (
           <div key="editor" style={{ position: 'absolute', inset: 0, paddingTop: NAV_H, boxSizing: 'border-box' }}>

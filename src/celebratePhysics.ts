@@ -309,7 +309,11 @@ export function resizeWorld(state: CelebrateWorld, w: number, h: number, stuckDi
   state.h = h
   state.stuckDist = stuckDist
   state.unghostDist = unghostDist
-  if (state.walls.length) {
+  // Never rebuild the cage during an exit. exitCelebrate deliberately removes the FLOOR so the
+  // letters fall out of the bottom, and leaves the other three walls; `walls.length` is then 3 —
+  // still truthy — so rebuilding here would hand back a full four-wall cage with a brand-new floor
+  // and the letters would land instead of leaving.
+  if (state.walls.length && !state.exiting) {
     for (const wall of state.walls) state.world.removeRigidBody(wall)
     const cage = createWallCage(state.rapier, state.world, w, h, { thickness: WALL_T, sideExtent: 'full' })
     state.floorBody = cage.floor

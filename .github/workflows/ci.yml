@@ -31,7 +31,15 @@ jobs:
       # every consumer would break on install while everything above still passed.
       - name: Verify published entry points exist
         run: |
+          # Rebuild explicitly: `npm run build` above emits the DEMO, and while it now writes to
+          # demo-dist/, this step must not depend on that separation holding.
+          npm run build:lib
           test -f dist/bubble-rapier-text.js || { echo "::error::dist bundle missing"; exit 1; }
           test -f dist/index.d.ts           || { echo "::error::dist types missing";  exit 1; }
-          ! grep -q 'import\.meta\.env' dist/bubble-rapier-text.js \
-            || { echo "::error::import.meta.env leaked into the bundle — breaks non-Vite consumers"; exit 1; }
+          # `! grep -q PATTERN missing-file` exits 0 (grep errors, ! inverts), so a vanished bundle
+          # would PASS this check. Assert on a file we have just confirmed exists, and match with
+          # `&& exit 1` rather than a leading `!`.
+          if grep -q 'import\.meta\.env' dist/bubble-rapier-text.js; then
+            echo "::error::import.meta.env leaked into the bundle — breaks non-Vite consumers"
+            exit 1
+          fi

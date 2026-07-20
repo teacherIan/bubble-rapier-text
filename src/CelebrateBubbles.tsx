@@ -418,26 +418,22 @@ export function CelebrateBubbles({
       let started = reduced
       let announcedReady = false
       const ticker = (t: PIXI.Ticker) => {
-        if (!started) {
-          if (!playRef.current) {
-            // Held: letters sit at their spawn edges. Still paint one frame so the host can hide
-            // its boot screen against a real canvas rather than a blank one.
-            if (!announcedReady) {
-              announcedReady = true
-              onReadyRef.current?.()
-            }
-            return
+        // Gate only the SIMULATION on `play`, never the position sync below. The sync is the only
+        // writer of text.position, so returning early here left every glyph at its default (0,0) —
+        // a pile in the top-left corner, painted at exactly the moment onReady tells the host to
+        // drop its boot screen. The letters must sit at their spawn edges (off-screen) instead.
+        const simulate = started || playRef.current
+        if (simulate && !started) started = true
+        if (simulate) {
+          acc += Math.min(SPIRAL_CLAMP, t.deltaMS / 1000)
+          let steps = 0
+          while (acc >= FIXED_DT && steps < MAX_SUBSTEPS) {
+            stepCelebrate(world, FIXED_DT)
+            acc -= FIXED_DT
+            steps += 1
           }
-          started = true
+          if (steps === MAX_SUBSTEPS && acc > FIXED_DT) acc = 0 // drop backlog
         }
-        acc += Math.min(SPIRAL_CLAMP, t.deltaMS / 1000)
-        let steps = 0
-        while (acc >= FIXED_DT && steps < MAX_SUBSTEPS) {
-          stepCelebrate(world, FIXED_DT)
-          acc -= FIXED_DT
-          steps += 1
-        }
-        if (steps === MAX_SUBSTEPS && acc > FIXED_DT) acc = 0 // drop backlog
         for (let i = 0; i < renderLetters.length; i++) {
           const p = world.letters[i].body.translation()
           renderLetters[i].text.position.set(p.x, p.y)
@@ -503,6 +499,15 @@ export function CelebrateBubbles({
         if (nw === world.w && nh === world.h) return // observer fires on no-op changes too
         wake()
         app.renderer.resize(nw, nh)
+        if (world.exiting) {
+          // Mid-exit the letters are falling off-screen and must keep falling. Re-homing would
+          // re-damp them (retargetLetter restores the damping exitCelebrate zeroed) and a
+          // structural rebuild would SNAP the wordmark back together on its way out. Keep the
+          // renderer sized to the container and leave the world alone.
+          world.w = nw
+          world.h = nh
+          return
+        }
 
         const next = layout(nw, nh)
         const sig = layout.signature(nw)

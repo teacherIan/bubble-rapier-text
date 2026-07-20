@@ -145,6 +145,13 @@ describe('wall-cage lifetime', () => {
     // The shipped component calls this from its ResizeObserver; a phone URL-bar collapse is enough.
     expect(() => resizeWorld(w, 500, 400, 60, 20)).not.toThrow()
     stepCelebrate(w, DT)
+
+    // …and not throwing is only half the contract. The exit removed the floor SO THE LETTERS CAN
+    // LEAVE; a rebuilt cage would hand back a new one (walls.length is 3, still truthy) and they
+    // would land instead.
+    expect(w.floorBody, 'a resize during an exit must not resurrect the floor').toBeNull()
+    for (let i = 0; i < 240; i++) stepCelebrate(w, DT)
+    expect(w.letters[0].body.translation().y, 'letters must still fall out of the bottom').toBeGreaterThan(w.h)
   })
 
   it('survives exit followed by removeWalls', async () => {

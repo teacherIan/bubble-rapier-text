@@ -33,7 +33,7 @@ The demo nav switches between the three surfaces:
 Other scripts:
 
 ```bash
-npm run build      # static demo build → dist/
+npm run build      # static demo build → demo-dist/
 npm run preview    # serve the built demo
 npm run typecheck  # tsc -b (strict, no emit)
 npm run lint       # eslint, zero-warning
