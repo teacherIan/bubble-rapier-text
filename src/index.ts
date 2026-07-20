@@ -27,10 +27,21 @@ export {
   scatterLetter,
   addLetter,
   resizeWorld, // resize the world + rebuild the enclosure on a viewport / device-rotation change
+  // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter grabbed
+  // by its top edge dangles and swings rather than sliding rigidly
+  startLetterDrag,
+  moveDrag,
+  releaseDrag,
+  // …and the same hinge for bodies YOU add to the world (a mascot, a prop): you own the handle
+  startBodyDrag,
+  moveBodyDrag,
+  endBodyDrag,
   GRAVITY,
   type LetterSpec,
+  type LetterBody,
   type CelebrateWorld,
   type DragState,
+  type MouseJoint,
 } from './celebratePhysics'
 
 // ── Glyph collision hulls + helpers (author / scale / draw) ───────────────────

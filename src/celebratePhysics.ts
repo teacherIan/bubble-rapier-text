@@ -33,13 +33,23 @@ const WALL_T = 240
 // properties, so applyImpulse/applyTorqueImpulse do NOTHING to a ghost — the springs can't right
 // it. Verified live: a ghosted, tilted letter never stands up under the angular spring alone.
 // The old one-shot FREE_KICK/FREE_SPIN was a hopeful ballistic shove that often left a flat-lying
-// oval tilted forever.) Tracked PER LETTER (a jittery neighbour can't block a wedged one); the
-// no-progress gate fires at ANY speed, so a letter batted around by contacts is still caught.
+// oval tilted forever.) Tracked PER LETTER (a jittery neighbour can't block a wedged one).
 // STUCK_DIST/UNGHOST_DIST scale with the text (passed in).
-const SCORE_EPS = 0.08 // placement score must improve by this to count as "progressing" (jitter-tolerant)
+//
+// TWO independent triggers, because either alone leaves a hole:
+//   • PARKED-and-wrong (fast path) — out of place AND barely moving for STUCK_FRAMES. Snappy, but
+//     it only ever fires for a letter that comes to rest.
+//   • WRONG-for-too-long at ANY speed (the wrongTotal watchdog) — closes the hole above, where a
+//     letter jostled just above PARK_V by its neighbours never parks, so it was never freed and
+//     could stay visibly out of place indefinitely.
+// (This replaced an earlier `bestScore`/SCORE_EPS "is it still making progress?" heuristic, which
+// was jitter-proof but could be defeated by a letter creeping imperceptibly toward its slot forever.)
+const PARK_V = 95 // px/s — below this LINEAR speed an out-of-place letter counts as wedged/parked
+const PARK_V2 = PARK_V * PARK_V // squared, so the per-frame "still moving?" test compares v·v and skips the sqrt
 const STUCK_ANG = 0.4 // rad of tilt (~23°) beyond which a settled letter is "not upright"
 const UNGHOST_ANG = 0.2 // re-solidify a gliding letter only once well under STUCK_ANG
-const STUCK_FRAMES = 45 // ~0.75s of stalled-but-wrong before we free a letter
+const STUCK_FRAMES = 40 // ~0.66s parked-and-wrong before we free a letter (the snappy path)
+const STUCK_TOTAL_FRAMES = 120 // ~2s wrong at ANY speed before the watchdog frees it (jostled-forever case)
 const GLIDE_K = 0.2 // per-frame pose lerp while gliding home — converges smoothly in ~12 frames
 const WALL_DELAY_MS = 2800 // add the enclosure after the entrance — letters fly in from OUTSIDE
 const SPAWN_MARGIN = 120 // how far outside the screen edge letters spawn
@@ -58,7 +68,8 @@ export interface LetterSpec {
   slotY: number
 }
 
-interface LetterBody {
+/** One letter's live physics state. Exposed because `CelebrateWorld.letters` is public. */
+export interface LetterBody {
   body: RAPIER.RigidBody
   tx: number
   ty: number
@@ -66,8 +77,9 @@ interface LetterBody {
   discarded: boolean // true once flung off in a transition — no springs, just flies under gravity
   mass: number // cached: constant for a fixed collider set (verified: disabling colliders doesn't change it)
   inertia: number // cached principal moment of inertia — avoids per-frame WASM calls in the springs
-  wrongFrames: number // consecutive frames out-of-place AND not improving its best score
-  bestScore: number // best (min) placement score (position+tilt) since last placed/retargeted — jitter-proof
+  wrongFrames: number // consecutive frames out-of-place AND parked (wedged) — the snappy free trigger
+  wrongTotal: number // consecutive frames out-of-place at ANY speed — the watchdog free trigger
+  arrivedOnce: boolean // has reached its slot ≥once — gates the watchdog so a fly-in (never-arrived) isn't cut short
 }
 
 // A drag is a Rapier revolute "mouse joint": a kinematic anchor at the cursor pinned to the grabbed
@@ -149,7 +161,7 @@ function freeLetter(L: LetterBody): void {
   L.body.setLinvel({ x: 0, y: 0 }, true)
   L.body.setAngvel(0, true)
   L.wrongFrames = 0
-  L.bestScore = Infinity
+  L.wrongTotal = 0
 }
 
 // Ghost a FLUNG (discarded) letter by making it pass through everything via collision GROUPS, WITHOUT
@@ -240,7 +252,8 @@ function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: Lett
     mass: body.mass(),
     inertia: body.principalInertia(),
     wrongFrames: 0,
-    bestScore: Infinity,
+    wrongTotal: 0,
+    arrivedOnce: false,
   }
 }
 
@@ -304,8 +317,9 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
   L.tx = x
   L.ty = y
   L.discarded = false
-  L.wrongFrames = 0
-  L.bestScore = Infinity // re-arm stuck detection against the new slot
+  L.wrongFrames = 0 // re-arm stuck detection against the new slot
+  L.wrongTotal = 0
+  L.arrivedOnce = false // now flying to a NEW slot — disarm the watchdog until it arrives there
   setLetterSolid(L, true) // ensure solid (it may have been mid-ghost from the untangle)
 }
 
@@ -383,6 +397,39 @@ export function releaseDrag(state: CelebrateWorld): void {
   }
 }
 
+// ── Dragging your OWN bodies (props) on the same hinge ──────────────────────────────────────────
+// The three above are letter-specific (they own `state.drag`, which the untangle and the springs
+// consult). A consumer that adds its own body to the world — a mascot, a prop, anything — gets the
+// same revolute-hinge feel from these, while owning the returned handle itself. The library
+// deliberately knows nothing about what the body IS.
+//
+// While the user holds a prop OVER the letters, pass `busy: true` to stepCelebrate: the letters
+// pressed against it would otherwise be read as wedged, ghosted, and driven home THROUGH it, then
+// ejected violently when they re-solidify where the prop sits.
+
+/** Grab any body in the world at a point in its local frame; it hinges/swings from there. */
+export function startBodyDrag(
+  state: CelebrateWorld,
+  body: RAPIER.RigidBody,
+  grabLocalX: number,
+  grabLocalY: number,
+  cursorX: number,
+  cursorY: number,
+): MouseJoint {
+  return attachMouseJoint(state, body, grabLocalX, grabLocalY, cursorX, cursorY)
+}
+
+/** Steer a prop drag's cursor anchor. Feed the handle to stepCelebrate's caller each frame. */
+export function moveBodyDrag(m: MouseJoint, cursorX: number, cursorY: number): void {
+  m.cursorX = cursorX
+  m.cursorY = cursorY
+}
+
+/** Release a prop drag, removing its joint + kinematic anchor. */
+export function endBodyDrag(state: CelebrateWorld, m: MouseJoint): void {
+  detachMouseJoint(state, m)
+}
+
 /**
  * Drop every letter off the bottom of the screen — the /celebrate "Start" exit. Removes the
  * floor (so the bottom is open) and stops the homing springs; gravity then pulls the letters
@@ -412,8 +459,15 @@ export function exitCelebrate(state: CelebrateWorld): void {
   }
 }
 
-/** Advance one fixed timestep: slot/upright springs, ghost-home untangle, drag spring. */
-export function stepCelebrate(state: CelebrateWorld, dt: number): void {
+/**
+ * Advance one fixed timestep: slot/upright springs, ghost-home untangle, drag.
+ *
+ * `busy` lets the HOST declare it is doing something the sim can't see — most importantly holding
+ * one of its own bodies over the letters (see startBodyDrag). While busy, the untangle stands down
+ * so pressed-against letters aren't ghosted and driven home through the obstacle. It is a parameter
+ * rather than a field on the world so it can never go stale: the host asserts it fresh each frame.
+ */
+export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): void {
   const { rapier, world, letters } = state
 
   // Exiting: no springs/untangle/drag — just step, so gravity pulls the letters down through
@@ -451,7 +505,7 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
       if (dist < state.unghostDist && Math.abs(ang) < UNGHOST_ANG) {
         setLetterSolid(L, true) // arrived — hand back to the springs (falls through below)
         L.wrongFrames = 0
-        L.bestScore = Infinity
+        L.wrongTotal = 0
       } else {
         L.body.setTranslation({ x: p.x + (L.tx - p.x) * GLIDE_K, y: p.y + (L.ty - p.y) * GLIDE_K }, true)
         L.body.setRotation(ang * (1 - GLIDE_K), true)
@@ -467,22 +521,42 @@ export function stepCelebrate(state: CelebrateWorld, dt: number): void {
     L.body.applyImpulse({ x: (L.tx - p.x) * SLOT_SPRING * dt * L.mass, y: (L.ty - p.y) * SLOT_SPRING * dt * L.mass }, true)
     L.body.applyTorqueImpulse(-ang * ANG_SPRING * dt * L.inertia, true)
 
-    // Per-letter untangle: SCORE combines position AND tilt (max of the two, 1 = the threshold), so
-    // a letter at the right spot but ROTATED (a flat-lying oval) still reads as wrong. A letter whose
-    // score doesn't IMPROVE by SCORE_EPS for STUCK_FRAMES is wedged → free it to glide home. Gating on
-    // BEST (min) score is jitter-proof AND fires at any speed, so a letter batted around by contacts
-    // (never parking) is still caught; we re-arm each cycle so it keeps trying until home + upright.
+    // Per-letter untangle. SCORE combines position AND tilt (max of the two; 1 = the threshold),
+    // so a letter at the right spot but ROTATED (a flat-lying oval) still reads as wrong.
     const score = Math.max(dist / state.stuckDist, Math.abs(ang) / STUCK_ANG)
     if (score <= 1) {
-      L.wrongFrames = 0
-      L.bestScore = Infinity // settled: re-arm so a later knock starts fresh
+      L.wrongFrames = 0 // settled
+      L.wrongTotal = 0
+      L.arrivedOnce = true // reached its slot — the watchdog may now arm for it (catches a post-arrival jostle)
       continue
     }
-    if (score < L.bestScore - SCORE_EPS) {
-      L.bestScore = score // still making real headway (closer OR more upright)
-      L.wrongFrames = 0
-    } else if (!state.drag && ++L.wrongFrames > STUCK_FRAMES) {
-      freeLetter(L) // ghost + stop; the glide above drives it home next frame
+    if (state.drag || busy) {
+      // Don't fight the user. While they HOLD a letter — or hold one of their OWN bodies over the
+      // letters (`busy`, see startBodyDrag) — the blocked letters just press against the obstacle;
+      // don't let the untangle ghost+drive them home through it (they'd un-ghost where the obstacle
+      // sits and get ejected → a violent bounce). They re-home the instant it moves away.
+    } else {
+      L.wrongTotal++ // counts wrong frames at ANY speed (the jostled-above-PARK_V case)
+      const v = L.body.linvel()
+      const sp2 = v.x * v.x + v.y * v.y
+      // Snappy path: PARKED-and-wrong → free fast. (A wobble can't reset wrongFrames.)
+      if (sp2 < PARK_V2) {
+        if (++L.wrongFrames > STUCK_FRAMES) {
+          freeLetter(L) // ghost + stop; the glide above drives it home next frame
+          continue
+        }
+      } else {
+        L.wrongFrames = Math.max(0, L.wrongFrames - 1) // moving — decay (jitter-proof)
+      }
+      // Watchdog: wrong for too long regardless of speed (jostled letters never park, so the snappy
+      // path alone missed them). Gated on wallsAdded (skip the initial dramatic fly-in) AND
+      // arrivedOnce (skip a TRANSITION fly-in too — removeWalls leaves wallsAdded=true, so without
+      // arrivedOnce a never-yet-arrived spawning letter would be cut short). A settled-then-jostled
+      // letter HAS arrivedOnce → covered.
+      if (state.wallsAdded && L.arrivedOnce && L.wrongTotal > STUCK_TOTAL_FRAMES) {
+        freeLetter(L)
+        continue
+      }
     }
   }
 

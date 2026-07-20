@@ -141,9 +141,10 @@ On the **Hull lab** view (`/` then pick the tab — params read from the query s
 ## How it works
 
 - [`src/celebratePhysics.ts`](src/celebratePhysics.ts) — the world: spawn-from-edges entrance,
-  per-letter slot + upright springs, a centre-anchored drag spring (no orbiting), a
-  "ghost-home" untangle that briefly disables collisions on wedged letters so they glide into
-  place, and the exit. Framework-free so it can run on the main thread or in a worker.
+  per-letter slot + upright springs, a revolute "mouse joint" drag (the grabbed point hinges to
+  the cursor, so a letter picked up by its top edge dangles and swings), a "ghost-home" untangle
+  that disables collisions on a wedged letter and DRIVES its pose home, and the exit.
+  Framework-free so it can run on the main thread or in a worker.
 - [`src/CelebrateBubbles.tsx`](src/CelebrateBubbles.tsx) — PIXI render, canvas glyph
   measurement, pointer input, and the fixed-step ticker that steps the sim in lockstep with
   rendering.
