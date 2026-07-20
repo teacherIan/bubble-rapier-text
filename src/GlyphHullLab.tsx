@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
 import { GLYPH_HULLS, EDITABLE_GLYPHS, scaleHull, strokeHullPx, hullForGlyph } from './glyphHulls'
+import { letterStyle } from './letterStyle'
 
 // Calibration harness for hand-authoring the letter collision hulls. Renders glyphs in
 // the REAL Cherry Bomb One face with a normalized grid centred on the exact body origin
@@ -14,7 +15,6 @@ import { GLYPH_HULLS, EDITABLE_GLYPHS, scaleHull, strokeHullPx, hullForGlyph } f
 //               hull that doesn't match its letter
 // Not linked anywhere; dev-only sandbox sibling of /celebrate-text.
 
-const FONT_STACK = '"Cherry Bomb One", system-ui, sans-serif'
 
 function params() {
   const p = new URLSearchParams(window.location.search)
@@ -24,19 +24,6 @@ function params() {
     hull: p.get('hull') === '1',
     all: p.get('all') === '1',
   }
-}
-
-function letterStyle(size: number): PIXI.TextStyle {
-  // BYTE-IDENTICAL to CelebrateBubbles.letterStyle (incl. dropShadow), so the PIXI text
-  // bounding box — hence the anchor-0.5 body origin colliders hang off — matches the live
-  // view exactly. Without the shadow the bbox (and origin) would shift a few px.
-  return new PIXI.TextStyle({
-    fontFamily: FONT_STACK,
-    fontSize: size,
-    fill: 0x4d9de0,
-    stroke: { color: 0xffffff, width: Math.max(2, size * 0.045) },
-    dropShadow: { color: 0x232347, alpha: 0.34, blur: 3, distance: size * 0.085, angle: Math.PI / 2 },
-  })
 }
 
 // Draw the normalized grid: ticks every 0.1u, bold axes, half-unit labels. `size` px = 1u.
@@ -124,7 +111,7 @@ export function GlyphHullLab({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly s
 
       const addGlyph = (ch: string, cx: number, cy: number, size: number) => {
         drawGrid(app!.stage, cx, cy, size)
-        const t = new PIXI.Text({ text: ch, style: letterStyle(size) })
+        const t = new PIXI.Text({ text: ch, style: letterStyle(0x4d9de0, size) })
         t.anchor.set(0.5)
         t.resolution = 2 // match the live component
         t.alpha = 0.62 // see the grid + hull through the fill

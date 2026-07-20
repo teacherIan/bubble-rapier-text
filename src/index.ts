@@ -66,6 +66,9 @@ export {
   type PxOval,
 } from './glyphHulls'
 
+// ── Text style (the ONE definition the component and both dev tools render with) ──
+export { FONT_STACK, letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
+
 // ── Word-to-word transition planning (pure — pairs with the re-layout primitives) ──
 export { planClaims, type LetterView, type TransitionPlan, type Slot } from './transition'
 

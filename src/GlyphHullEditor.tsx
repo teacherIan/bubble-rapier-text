@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
 import { GLYPH_LIST, GLYPH_HULLS, EDITABLE_GLYPHS, type HullShape } from './glyphHulls'
+import { letterStyle } from './letterStyle'
 
 // Interactive editor for the letter collision hulls. The glyph is rendered in the REAL
 // Cherry Bomb One face (PIXI, anchor 0.5 — identical origin to the live component), and you
@@ -9,7 +10,6 @@ import { GLYPH_LIST, GLYPH_HULLS, EDITABLE_GLYPHS, type HullShape } from './glyp
 // (origin = glyph centre, +y down), so what you place here drops straight into glyphHulls.ts.
 // Everything is mirrored to localStorage + a live code box; not linked anywhere (dev route).
 
-const FONT_STACK = '"Cherry Bomb One", system-ui, sans-serif'
 const BOX = 720 // editor canvas is a fixed square (deterministic — no viewport races)
 const CX = BOX / 2
 const CY = BOX / 2
@@ -214,13 +214,11 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
         // syncs the text immediately after, so the initial value is cosmetic. Depending on `glyphs`
         // here would tear down and rebuild the whole renderer whenever the glyph set changed.
         text: glyphRef.current,
-        style: new PIXI.TextStyle({
-          fontFamily: FONT_STACK,
-          fontSize: UNIT,
-          fill: 0x4d9de0,
-          stroke: { color: 0xffffff, width: Math.max(2, UNIT * 0.045) },
-          dropShadow: { color: 0x232347, alpha: 0.34, blur: 3, distance: UNIT * 0.085, angle: Math.PI / 2 },
-        }),
+        // The SHARED style — the whole point of the editor is that the glyph you trace on is
+        // pixel-for-pixel the one the live component renders. Stroke and shadow both inflate the
+        // text's bounding box, and the collider origin is that box's centre, so any drift here
+        // silently offsets every hull authored afterwards.
+        style: letterStyle(0x4d9de0, UNIT),
       })
       t.anchor.set(0.5)
       t.resolution = 2

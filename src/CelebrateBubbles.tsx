@@ -9,10 +9,12 @@ import {
   startLetterDrag,
   moveDrag,
   releaseDrag,
+  armEnclosureNow,
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
 import { hullForGlyph, scaleHull, strokeHullPx, type PxShape } from './glyphHulls'
+import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
 // bubble-letter backed by a Rapier rigid body whose collider is a HAND-AUTHORED hull of
@@ -30,7 +32,6 @@ import { hullForGlyph, scaleHull, strokeHullPx, type PxShape } from './glyphHull
 
 const LINE1 = { text: 'CELEBRATE', size: 120 }
 const LINE2 = { text: 'your hard work', size: 60 }
-const FONT_STACK = '"Cherry Bomb One", system-ui, sans-serif'
 
 // One festive color per letter (cycled).
 const PALETTE = [0xef6f6c, 0xf4a259, 0xf6c453, 0x8cb369, 0x4d9de0, 0x7768ae, 0xe26d9e, 0x49b6a8]
@@ -46,16 +47,6 @@ const UNGHOST_DIST = 22 // from slot, at which a ghosting letter re-solidifies
 const FIXED_DT = 1 / 60
 const MAX_SUBSTEPS = 3
 const SPIRAL_CLAMP = 0.25
-
-function letterStyle(color: number, size: number): PIXI.TextStyle {
-  return new PIXI.TextStyle({
-    fontFamily: FONT_STACK,
-    fontSize: size,
-    fill: color,
-    stroke: { color: 0xffffff, width: Math.max(2, size * 0.045) },
-    dropShadow: { color: 0x232347, alpha: 0.34, blur: 3, distance: size * 0.085, angle: Math.PI / 2 },
-  })
-}
 
 interface RenderLetter {
   text: PIXI.Text
@@ -75,11 +66,39 @@ export function CelebrateBubbles({
   exiting = false,
   transparent = false,
   frame = false,
-}: { position?: 'fixed' | 'absolute'; exiting?: boolean; transparent?: boolean; frame?: boolean } = {}) {
+  play = true,
+  reducedMotion,
+  maxResolution = (w) => (w <= 640 ? 2 : 2.5),
+  onReady,
+  onError,
+}: {
+  position?: 'fixed' | 'absolute'
+  exiting?: boolean
+  transparent?: boolean
+  frame?: boolean
+  /** Hold the letters at their spawn edges until true — lets a host finish its own intro first. */
+  play?: boolean
+  /** Override the prefers-reduced-motion media query (letters start home, no rain). */
+  reducedMotion?: boolean
+  /** Cap on devicePixelRatio. A number, or a function of the viewport width. */
+  maxResolution?: number | ((width: number) => number)
+  /** Fired on the first painted frame — hide your own loading/boot screen here. */
+  onReady?: () => void
+  /** Init failed (WebGL blocked, WASM refused). Leave your fallback UI up. */
+  onError?: (err: unknown) => void
+} = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<CelebrateWorld | null>(null)
   const exitingRef = useRef(exiting)
   exitingRef.current = exiting
+  // Mirrored into refs: the build effect runs ONCE, so its closure must read the latest value
+  // rather than whatever was current at mount.
+  const playRef = useRef(play)
+  playRef.current = play
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   // When asked to exit, fling the letters off-screen. (If the world is still being built,
   // the build path checks exitingRef and exits as soon as it's ready.)
@@ -92,6 +111,11 @@ export function CelebrateBubbles({
     if (!el) return
     let cancelled = false
     let cleanup: (() => void) | null = null
+    // Track partially-built resources so a throw mid-build frees them. Without this, a failed
+    // mount leaks a WebGL context and a Rapier world; browsers cap live contexts, so in an SPA
+    // that remounts, a handful of failures permanently bricks the canvas.
+    let builtApp: PIXI.Application | null = null
+    let builtWorld: CelebrateWorld | null = null
 
     const run = async () => {
       // Load the bubble font, but NEVER block on it — glyph widths/shapes drive the
@@ -120,7 +144,14 @@ export function CelebrateBubbles({
         backgroundAlpha: 0,
         antialias: true,
         autoDensity: true,
-        resolution: window.devicePixelRatio || 1,
+        // Clamp DPR. A phone at DPR 3 renders 9x the pixels of DPR 1 for a difference nobody can
+        // see on a bubble letter, and pays for it in battery and fill rate.
+        // NB deliberately NOT powerPreference:'high-performance' — that forces the discrete GPU on
+        // dual-GPU laptops, which would undo the very saving this clamp is making.
+        resolution: Math.min(
+          window.devicePixelRatio || 1,
+          typeof maxResolution === 'function' ? maxResolution(w) : maxResolution,
+        ),
         preference: 'webgl',
       })
       if (cancelled || !containerRef.current) {
@@ -131,15 +162,23 @@ export function CelebrateBubbles({
       app.canvas.style.width = '100%'
       app.canvas.style.height = '100%'
       el.appendChild(app.canvas)
+      builtApp = app
 
       // Fit the phrase to the viewport: the fixed display sizes overflow narrow phone
       // screens (letters jam against the walls), so scale both lines down until the
       // widest fits the width with margin (0.8 leaves room so end letters aren't pinned).
-      const measureCtx = document.createElement('canvas').getContext('2d')
+      // Measure through PIXI's own CanvasTextMetrics, not a raw 2D context. The raw context does
+      // not reliably resolve the loaded web face (it silently falls back to the system stack), so it
+      // UNDER-measures the phrase — the fit scale then comes out too large and the end letters spawn
+      // pinned against the walls. One reused style object per size; spaces are priced with the same
+      // SPACE_FRAC that buildLine advances by, so measurement and layout can't disagree.
       const measure = (text: string, size: number) => {
-        if (!measureCtx) return text.length * size * 0.6
-        measureCtx.font = `400 ${size}px ${FONT_STACK}`
-        return measureCtx.measureText(text).width
+        const style = metricStyle(size)
+        let total = 0
+        for (const ch of text) {
+          total += ch === ' ' ? size * SPACE_FRAC : PIXI.CanvasTextMetrics.measureText(ch, style).width
+        }
+        return total
       }
       const fit = Math.min(1, (w * 0.8) / Math.max(measure(LINE1.text, LINE1.size), measure(LINE2.text, LINE2.size)))
       const line1 = { text: LINE1.text, size: LINE1.size * fit }
@@ -150,7 +189,7 @@ export function CelebrateBubbles({
       const specs: LetterSpec[] = []
       const buildLine = (line: { text: string; size: number }, lineY: number) => {
         const items = [...line.text].map((ch) => {
-          if (ch === ' ') return { ch, t: null as PIXI.Text | null, width: line.size * 0.34 }
+          if (ch === ' ') return { ch, t: null as PIXI.Text | null, width: line.size * SPACE_FRAC }
           const t = new PIXI.Text({ text: ch, style: letterStyle(PALETTE[renderLetters.length % PALETTE.length], line.size) })
           t.anchor.set(0.5)
           t.resolution = 2
@@ -189,9 +228,25 @@ export function CelebrateBubbles({
         app.destroy({ removeView: true }, { children: true })
         return // bail BEFORE publishing the world, so no handle outlives this freed world
       }
+      builtWorld = world
       worldRef.current = world
       if (exitingRef.current) exitCelebrate(world) // already asked to exit before the world finished building
       if (import.meta.env.DEV) (window as unknown as { __cb?: unknown }).__cb = { world, specs } // dev-only debug handle
+
+      // Reduced motion: no rain. Snap every letter onto its slot, upright and still, and put the
+      // cage up immediately — there is nothing flying in for it to contain.
+      const reduced =
+        reducedMotion ?? (typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false)
+      if (reduced) {
+        for (const L of world.letters) {
+          if (L.discarded) continue
+          L.body.setTranslation({ x: L.tx, y: L.ty }, true)
+          L.body.setRotation(0, true)
+          L.body.setLinvel({ x: 0, y: 0 }, true)
+          L.body.setAngvel(0, true)
+        }
+        armEnclosureNow(world)
+      }
 
       // --- pointer ---
       const toWorld = (e: PointerEvent): { x: number; y: number } => {
@@ -281,7 +336,23 @@ export function CelebrateBubbles({
       window.addEventListener('keydown', onKey)
 
       let acc = 0
+      // `started` LATCHES: once the host lets the rain go, a later play=false must not re-freeze the
+      // letters mid-fall. Reduced motion has nothing to wait for, so it starts immediately.
+      let started = reduced
+      let announcedReady = false
       const ticker = (t: PIXI.Ticker) => {
+        if (!started) {
+          if (!playRef.current) {
+            // Held: letters sit at their spawn edges. Still paint one frame so the host can hide
+            // its boot screen against a real canvas rather than a blank one.
+            if (!announcedReady) {
+              announcedReady = true
+              onReadyRef.current?.()
+            }
+            return
+          }
+          started = true
+        }
         acc += Math.min(SPIRAL_CLAMP, t.deltaMS / 1000)
         let steps = 0
         while (acc >= FIXED_DT && steps < MAX_SUBSTEPS) {
@@ -308,6 +379,10 @@ export function CelebrateBubbles({
           debugGfx.clear() // toggled off — clear once, then idle
           debugDrawn = false
         }
+        if (!announcedReady) {
+          announcedReady = true
+          onReadyRef.current?.() // first painted frame — safe to drop a boot screen now
+        }
       }
       app.ticker.add(ticker)
 
@@ -328,7 +403,27 @@ export function CelebrateBubbles({
       }
     }
 
-    run().catch((err) => console.error('CelebrateBubbles init failed:', err))
+    run().catch((err) => {
+      console.error('CelebrateBubbles init failed:', err)
+      // Free whatever got built before the throw (see builtApp/builtWorld). Guarded on `cleanup`
+      // so we never double-free what the normal teardown path already owns.
+      if (!cleanup) {
+        try {
+          builtWorld?.world.free()
+        } catch {
+          /* already freed */
+        }
+        try {
+          builtApp?.destroy({ removeView: true }, { children: true })
+        } catch {
+          /* already destroyed */
+        }
+        builtWorld = null
+        builtApp = null
+        worldRef.current = null
+      }
+      onErrorRef.current?.(err)
+    })
 
     return () => {
       cancelled = true
