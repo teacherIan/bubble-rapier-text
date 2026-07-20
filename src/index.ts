@@ -49,6 +49,8 @@ export {
   GLYPH_HULLS,
   GLYPH_LIST,
   hullForGlyph,
+  makeHullForGlyph, // bind your OWN hull map once, then pass the 3-arg result down the build path
+  EDITABLE_GLYPHS, // every authored glyph, in dev-tool tab order
   scaleHull,
   strokeHullPx,
   type HullShape,

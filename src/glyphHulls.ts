@@ -201,6 +201,13 @@ export function strokeHullPx(
 // The unique glyphs in "CELEBRATE your hard work" (order is the editor's tab order).
 export const GLYPH_LIST = ['C', 'E', 'L', 'B', 'R', 'A', 'T', 'y', 'o', 'u', 'r', 'h', 'a', 'd', 'w', 'k'] as const
 
+/**
+ * Every glyph the dev tools can reach, in tab order: the demo phrase first (GLYPH_LIST), then any
+ * other authored hull. Without the second half, glyphs outside the demo phrase would be
+ * un-browsable and therefore unverifiable — you could author them but never look at them again.
+ * Declared after GLYPH_HULLS below, so it is defined at the bottom of this file.
+ */
+
 // ── Collision hulls, placed in /glyph-editor against the real Cherry Bomb One face ──
 // (font-size units; origin = glyph centre; +y down). Curved primitives only — ball,
 // capsule, rrect (roundCuboid), oval (roundConvexHull) — so packed letters slide and
@@ -242,11 +249,67 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
     { t: 'cap', x: 0.058, y: -0.012, r: 0.1, h: 0.06, a: -2.165 },
     { t: 'cap', x: 0.073, y: 0.187, r: 0.1, h: 0.068, a: -0.541 },
   ],
+
+  // ── Traced for a second wordmark ("Little Striders Running Club") ─────────────────────────
+  // Merged in key-wise, never as a wholesale replacement. Note `o` and `a` are deliberately NOT
+  // taken from that set: both maps have them, traced independently, and the values differ by
+  // ~5% (that wordmark's own lines contain no `o`/`a`, so they were re-traced from scratch for
+  // its transition words). Neither is "more correct" — a blind spread would silently clobber
+  // whichever was tuned against the demo phrase above.
+  i: [{ t: 'oval', x: -0.043, y: -0.023, rx: 0.379, ry: 0.12, a: 1.574 }],
+  t: [
+    { t: 'cap', x: -0.073, y: -0.016, r: 0.108, h: 0.254, a: -0.009 },
+    { t: 'cap', x: -0.06, y: -0.097, r: 0.1, h: 0.175, a: 1.569 },
+    { t: 'cap', x: -0.005, y: 0.263, r: 0.1, h: 0.083, a: 1.683 },
+  ],
+  l: [{ t: 'oval', x: -0.045, y: -0.005, rx: 0.38, ry: 0.12, a: 1.588 }],
+  e: [{ t: 'ball', x: -0.035, y: 0.112, r: 0.253 }],
+  S: [{ t: 'oval', x: -0.039, y: -0.006, rx: 0.367, ry: 0.286, a: 1.555 }],
+  s: [{ t: 'ball', x: -0.045, y: 0.102, r: 0.231 }],
+  n: [{ t: 'ball', x: -0.053, y: 0.11, r: 0.266 }],
+  g: [{ t: 'ball', x: -0.029, y: 0.149, r: 0.323 }],
+  b: [
+    { t: 'ball', x: -0.037, y: 0.098, r: 0.262 },
+    { t: 'cap', x: -0.184, y: -0.113, r: 0.1, h: 0.166, a: 0.252 },
+  ],
+  M: [{ t: 'ball', x: -0.039, y: -0.002, r: 0.394 }],
+  c: [{ t: 'ball', x: -0.025, y: 0.102, r: 0.246 }],
+  J: [
+    { t: 'cap', x: -0.006, y: -0.255, r: 0.1, h: 0.192, a: 1.568 },
+    { t: 'cap', x: 0.007, y: 0.039, r: 0.136, h: 0.12, a: 0 },
+    { t: 'cap', x: -0.184, y: 0.201, r: 0.1, h: 0.125, a: -0.811 },
+  ],
+  D: [{ t: 'ball', x: -0.062, y: -0.016, r: 0.344 }],
 }
 
-/** Hull for a glyph, or a single-ball fallback sized to the grab box (half-extents in u). */
-export function hullForGlyph(ch: string, hwU: number, hhU: number): HullShape[] {
-  const h = GLYPH_HULLS[ch]
+/**
+ * Hull for a glyph, or a single-ball fallback sized to the grab box (half-extents in u).
+ *
+ * `hulls` defaults to the bundled map, so every existing 3-argument call is unchanged. Pass your
+ * own to run the engine on glyphs this package has never seen — the reason it exists is that an
+ * app's authored hulls are ITS data, and vendoring the whole module just to swap the map is what
+ * caused the first consumer of this library to fork it.
+ */
+export function hullForGlyph(
+  ch: string,
+  hwU: number,
+  hhU: number,
+  hulls: Record<string, HullShape[]> = GLYPH_HULLS,
+): HullShape[] {
+  const h = hulls[ch]
   if (h && h.length) return h
   return [{ t: 'ball', x: 0, y: 0, r: Math.max(0.05, Math.min(hwU, hhU) * 0.95) }]
 }
+
+/**
+ * Bind a hull map once and hand the resulting 3-argument function down into the build path.
+ * `buildLetter` calls this per glyph per rebuild, so threading a map through every render layer
+ * is noise; binding at the app boundary is not.
+ */
+export const makeHullForGlyph =
+  (hulls: Record<string, HullShape[]>) =>
+  (ch: string, hwU: number, hhU: number): HullShape[] =>
+    hullForGlyph(ch, hwU, hhU, hulls)
+
+/** @see the doc comment above GLYPH_HULLS. */
+export const EDITABLE_GLYPHS: readonly string[] = [...new Set<string>([...GLYPH_LIST, ...Object.keys(GLYPH_HULLS)])]

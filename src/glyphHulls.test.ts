@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GLYPH_HULLS, hullForGlyph, scaleHull, type HullShape } from './glyphHulls'
+import { EDITABLE_GLYPHS, GLYPH_HULLS, GLYPH_LIST, hullForGlyph, makeHullForGlyph, scaleHull, type HullShape } from './glyphHulls'
 
 // These pin the two invariants the whole collision system rests on:
 //  1. scaleHull is a pure units→px multiply that leaves ANGLES alone. Scaling an angle is the
@@ -64,6 +64,49 @@ describe('hullForGlyph', () => {
     const hull = hullForGlyph('§', 0, 0)
     if (hull[0].t !== 'ball') throw new Error('expected ball fallback')
     expect(hull[0].r).toBeGreaterThan(0) // a 0-radius collider would fall through the floor
+  })
+})
+
+describe('hullForGlyph with an injected map', () => {
+  const mine: Record<string, HullShape[]> = { Z: [{ t: 'ball', x: 0, y: 0, r: 0.4 }] }
+
+  it('reads the injected map, not the bundled one', () => {
+    expect(hullForGlyph('Z', 0.3, 0.3, mine)).toBe(mine['Z'])
+  })
+
+  it('does NOT fall back to the bundled map for a glyph the injected map lacks', () => {
+    // 'o' exists in GLYPH_HULLS but not in `mine` — the caller asked for THEIR set, so the
+    // answer is the generic ball, not this package's `o`. Merging the two behind the caller's
+    // back would resurrect exactly the silent-divergence problem the parameter exists to solve.
+    const hull = hullForGlyph('o', 0.3, 0.3, mine)
+    expect(hull).not.toBe(GLYPH_HULLS['o'])
+    expect(hull[0].t).toBe('ball')
+    expect(hull).toHaveLength(1)
+  })
+
+  it('makeHullForGlyph binds the map and matches the 4-arg call', () => {
+    const bound = makeHullForGlyph(mine)
+    expect(bound('Z', 0.3, 0.3)).toBe(hullForGlyph('Z', 0.3, 0.3, mine))
+    expect(bound('§', 0.3, 0.3)[0].t).toBe('ball') // fallback still applies
+  })
+})
+
+describe('the merged hull set', () => {
+  // `o` and `a` exist in both this package's traces and the consumer set merged alongside them,
+  // with independently traced (~5% different) values. These pin THIS package's values so a future
+  // `{...GLYPH_HULLS, ...theirs}` spread can't silently clobber what the demo phrase was tuned to.
+  it('keeps the demo-tuned o and a, not the re-traced ones', () => {
+    expect(GLYPH_HULLS['o']).toEqual([{ t: 'ball', x: -0.044, y: 0.107, r: 0.249 }])
+    expect(GLYPH_HULLS['a']).toEqual([{ t: 'ball', x: -0.053, y: 0.132, r: 0.269 }])
+  })
+
+  it('retains every glyph of the demo phrase', () => {
+    for (const ch of GLYPH_LIST) expect(GLYPH_HULLS[ch], `demo glyph ${ch} went missing`).toBeTruthy()
+  })
+
+  it('EDITABLE_GLYPHS covers every authored glyph, so none is unreachable in the dev tools', () => {
+    for (const ch of Object.keys(GLYPH_HULLS)) expect(EDITABLE_GLYPHS).toContain(ch)
+    expect(new Set(EDITABLE_GLYPHS).size).toBe(EDITABLE_GLYPHS.length) // no duplicate tabs
   })
 })
 
