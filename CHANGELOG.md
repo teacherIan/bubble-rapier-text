@@ -2,7 +2,27 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
-## 0.4.0 — unreleased
+## 0.4.1 — 2026-07-20
+
+### Fixed
+
+- **`sideEffects` now actually protects the bundle.** `*.css` didn't match `src/styles.css`
+  (no-slash globs match root only), and `pixi.js/unsafe-eval` named another package's file,
+  which the field can't do. Now `**/*.css` + `./dist/**/*.js`, so a tree-shaking consumer can't
+  drop the stylesheet import or the bundle's module-level `pixi.js/unsafe-eval` registration.
+- Stale header comment in `vite.lib.config.ts` claimed `exports` points at the TypeScript
+  source; it has pointed at `dist/` since 0.3.0.
+
+### Docs
+
+- README: "Sharing one Rapier init with a host app" — the `setRapierLoader` recipe (module
+  scope, before mount) for consumers that already initialize Rapier.
+
+Note: the `using deprecated parameters for the initialization function` console warning comes
+from inside `@dimforge/rapier2d-compat`'s own shim (its public `init()` takes no arguments) —
+not fixable here; harmless.
+
+## 0.4.0 — 2026-07-20
 
 ### Changed (visual default)
 
@@ -21,7 +41,7 @@ All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship i
 - `<CelebrateBubbles scatterStyle>` — `'bonk'` (default) or `'through'`.
 - `scatterLetter(state, index, { solid })` — `solid` defaults true.
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-07-20
 
 Makes the library consumable at all, and adds the pieces a second consumer needs.
 
