@@ -2,6 +2,25 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.4.0 — unreleased
+
+### Changed (visual default)
+
+- **Transition debris now BONKS.** Letters dropped in a word-to-word transition fly off SOLID by
+  default, colliding with the forming word and each other on the way out — a livelier, more chaotic
+  effect than the previous clean pass-through. A solid straggler that wedges on-screen drops to
+  pass-through after ~2.5s so it can still escape, and the cull backstop sweeps whatever remains.
+  Pass `scatterStyle="through"` (component) or `scatterLetter(state, i, { solid: false })` (physics)
+  for the old calm morph.
+
+  This restores an effect the app that seeded this library had evolved (solid-bonk) but that an
+  earlier merge had replaced with the tamer pass-through while fixing an unrelated freeze bug.
+
+### Added
+
+- `<CelebrateBubbles scatterStyle>` — `'bonk'` (default) or `'through'`.
+- `scatterLetter(state, index, { solid })` — `solid` defaults true.
+
 ## 0.3.0 — unreleased
 
 Makes the library consumable at all, and adds the pieces a second consumer needs.

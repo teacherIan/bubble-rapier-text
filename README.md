@@ -90,6 +90,7 @@ different React `key` to change those.
 | `phrase`      | `Line[] \| (vw) => Line[]` | the demo phrase | **Live.** The words to set. `Line` is `{ text, weight? }`; `weight` scales that line relative to the others. Changing it morphs the current word into the new one. A function of viewport width lets you restructure on a phone. |
 | `hulls`       | `Record<string, HullShape[]>` | bundled | Collision hulls for your glyphs. The bundled set is traced against Cherry Bomb One — a different display face wants its own (see *Authoring hulls*). |
 | `palette`     | `readonly number[]`       | 8 festive colours | Per-letter fill colours, cycled. |
+| `scatterStyle`| `'bonk' | 'through'`      | `'bonk'`  | How transition debris flies off. `bonk` keeps flung letters SOLID so they collide with the forming word (chaotic, fun); `through` passes them through for a calm morph. |
 | `layout`      | `LayoutStrategy`          | derived from `phrase` | **Live.** Full control of slot geometry; overrides `phrase`. Changing it morphs, same as `phrase`. See `createLineLayout`. |
 | `idleFrames`  | `number \| false`         | `110`     | Stop the PIXI ticker after this many fully-calm frames; `false` never stops. Wakes on pointer, resize, and exit. |
 | `reducedMotion` | `boolean`               | the media query | Force the no-rain path: letters start on their slots and the cage goes up immediately. |

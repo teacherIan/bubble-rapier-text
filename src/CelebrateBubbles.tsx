@@ -90,6 +90,7 @@ export function CelebrateBubbles({
   phrase,
   hulls,
   palette = PALETTE,
+  scatterStyle = 'bonk',
   layout: layoutProp,
   idleFrames = 110,
   reducedMotion,
@@ -114,6 +115,12 @@ export function CelebrateBubbles({
   hulls?: Record<string, HullShape[]>
   /** Per-letter fill colours, cycled in order. */
   palette?: readonly number[]
+  /**
+   * How letters dropped in a transition fly off. `'bonk'` (default) keeps them SOLID so they collide
+   * with the forming word and each other on the way out — chaotic and fun. `'through'` passes them
+   * through everything for a calm morph.
+   */
+  scatterStyle?: 'bonk' | 'through'
   /** CSS background behind the canvas. Overrides the default gradient; `transparent` wins over both. */
   background?: string
   /** The container's `title`/tooltip. User-visible text, so a non-English host needs to set it. */
@@ -549,7 +556,7 @@ export function CelebrateBubbles({
         // Unclaimed: fling off-screen, dropped BEHIND the forming word so debris never paints over it.
         for (let i = 0; i < world.letters.length; i++) {
           if (claimed.has(i)) continue
-          scatterLetter(world, i)
+          scatterLetter(world, i, { solid: scatterStyle === 'bonk' })
           renderLetters[i].text.zIndex = 0
         }
         // Missing: a fresh letter flies in from an edge (specFor + addLetter keep both arrays aligned).

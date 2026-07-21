@@ -4,6 +4,7 @@ import {
   stepCelebrate,
   armEnclosureNow,
   scatterLetter,
+  cullDiscarded,
   retargetLetter,
   exitCelebrate,
   resizeWorld,
@@ -299,5 +300,52 @@ describe('the self-freeing untangle', () => {
       if (L.arrivedOnce) break
       expect(L.ghost, 'a never-arrived letter must not be freed mid-flight').toBe(false)
     }
+  })
+})
+
+describe('scatterLetter fling styles', () => {
+  it('flings SOLID by default — the bonk (collider enabled, not ghosted)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    scatterLetter(w, 0)
+    const L = w.letters[0]
+    expect(L.discarded).toBe(true)
+    expect(L.ghost, 'a solid fling keeps collisions on so it bonks the forming word').toBe(false)
+    // it is actually moving off, not frozen
+    const v = L.body.linvel()
+    expect(Math.hypot(v.x, v.y)).toBeGreaterThan(100)
+  })
+
+  it('flings pass-through when solid:false — the calm morph', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    scatterLetter(w, 0, { solid: false })
+    expect(w.letters[0].ghost, 'solid:false passes through everything from frame one').toBe(true)
+  })
+
+  it('a solid straggler drops to pass-through after its bonk window, so it can escape', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    scatterLetter(w, 0) // solid
+    const L = w.letters[0]
+    // Pin it on-screen so it cannot leave on its own — the wedged-straggler case.
+    for (let i = 0; i < 200; i++) {
+      L.body.setTranslation({ x: 400, y: 300 }, true)
+      stepCelebrate(w, DT)
+      if (L.ghost) break
+    }
+    expect(L.ghost, 'a solid straggler must phase to pass-through so it stops disturbing the word').toBe(true)
+  })
+
+  it('a flung letter still gets culled off-screen regardless of style', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    scatterLetter(w, 0)
+    // let it fly; it should leave and be culled
+    for (let i = 0; i < 300; i++) {
+      stepCelebrate(w, DT)
+      if (cullDiscarded(w).length) break
+    }
+    expect(w.letters).toHaveLength(0)
   })
 })
