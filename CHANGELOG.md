@@ -2,6 +2,21 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.5.1 — 2026-07-21
+
+### Fixed
+
+- **A mirror resting on a letter's slot no longer causes a ghost/eject oscillation.** With the
+  untangle armed, a letter whose home sat under a stationary obstacle was read as wedged,
+  ghost-driven through the mirror, re-solidified inside it, and ejected — every ~0.7s, forever.
+  A resting mirror overlapping any letter's SLOT now asserts `busy`, so the letter leans on it
+  until it drifts away.
+
+### Added
+
+- Authored a slim `!` hull (stem capsule + dot). It previously fell back to a grab-box ball,
+  which collided ~3× wider than the glyph.
+
 ## 0.5.0 — 2026-07-20
 
 ### Added

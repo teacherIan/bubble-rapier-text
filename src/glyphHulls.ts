@@ -226,6 +226,13 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
     { t: 'cap', x: -0.043, y: -0.222, r: 0.145, h: 0.219, a: 1.576 },
     { t: 'cap', x: -0.041, y: 0.105, r: 0.141, h: 0.115, a: -0.017 },
   ],
+  // "!" — a slim vertical stem + the dot. Authored numerically against the face's
+  // proportions (a thin glyph; the ball fallback collided ~3× too wide). Retune in
+  // /glyph-editor if it ever reads off.
+  '!': [
+    { t: 'cap', x: 0, y: -0.1, r: 0.12, h: 0.17, a: 0 },
+    { t: 'ball', x: 0, y: 0.3, r: 0.12 },
+  ],
   y: [{ t: 'cap', x: -0.058, y: 0.192, r: 0.26, h: 0.086, a: 0.181 }],
   o: [{ t: 'ball', x: -0.044, y: 0.107, r: 0.249 }],
   u: [{ t: 'ball', x: -0.038, y: 0.088, r: 0.26 }],

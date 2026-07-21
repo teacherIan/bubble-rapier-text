@@ -520,6 +520,25 @@ export function CelebrateBubbles({
             }
           }
         }
+        // A mirror RESTING on a letter's SLOT also counts as busy. With the
+        // untangle armed, a letter whose home is occupied is read as wedged,
+        // ghost-driven THROUGH the mirror, re-solidified inside it, and ejected
+        // — a ~0.7s oscillation loop. Busy stands the untangle down, so the
+        // letter simply leans on the mirror until it drifts off the slot. The
+        // check is against tx/ty (the slot), not the letter's pose: it is the
+        // occupied HOME that starves the return, wherever the letter now sits.
+        if (!moved) {
+          moved = poses.some((p) =>
+            world.letters.some((L, i) => {
+              if (L.discarded) return false
+              const rl = renderLetters[i]
+              const reach = p.r + Math.max(rl?.hw ?? 0, rl?.hh ?? 0)
+              const dx = p.x - L.tx
+              const dy = p.y - L.ty
+              return dx * dx + dy * dy < reach * reach
+            }),
+          )
+        }
         return moved
       }
       const ticker = (t: PIXI.Ticker) => {
