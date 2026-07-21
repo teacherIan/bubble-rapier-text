@@ -2,6 +2,22 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.7.3 — 2026-07-21
+
+### Changed
+
+- **Letter legibility over busy fields**: the white outline is thicker (0.045em → 0.062em) and
+  the drop shadow is now a soft close hug (alpha 0.34 → 0.16, distance 0.085em → 0.045em,
+  blur 3 → 4). The old heavy offset shadow read as a black smear against saturated backgrounds.
+  Metrics change with it (metricStyle is the one source), so measurement/colliders stay agreed.
+
+### Fixed
+
+- **Teardown can no longer feed the host's error boundary.** PIXI v8's canvas-text texture pool
+  can double-return a texture inside `app.destroy` (its GC may have unloaded it while the ticker
+  slept), throwing mid-cleanup during React unmount. All destroy sites now go through
+  `safeDestroyApp`: swallow, drop the canvas, move on — the app was being discarded anyway.
+
 ## 0.7.2 — 2026-07-21
 
 ### Fixed

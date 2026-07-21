@@ -27,8 +27,11 @@ export function metricStyle(size: number): PIXI.TextStyle {
   return new PIXI.TextStyle({
     fontFamily: FONT_STACK,
     fontSize: size,
-    stroke: { color: 0xffffff, width: Math.max(2, size * 0.045) },
-    dropShadow: { color: 0x232347, alpha: 0.34, blur: 3, distance: size * 0.085, angle: Math.PI / 2 },
+    // A THICKER white outline is what keeps a letter legible over a busy field (blobs, photos);
+    // the shadow is only depth. The old heavy offset shadow (alpha 0.34, distance 0.085em) read as
+    // a strange black smear against saturated backgrounds — now a soft close hug.
+    stroke: { color: 0xffffff, width: Math.max(2.5, size * 0.062) },
+    dropShadow: { color: 0x232347, alpha: 0.16, blur: 4, distance: size * 0.045, angle: Math.PI / 2 },
     padding: Math.ceil(size * 0.2),
   })
 }

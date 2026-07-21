@@ -87,6 +87,23 @@ interface RenderLetter {
   seq: number // the letter's monotonic deal order — lets styleFor vary per letter (pattern offsets)
 }
 
+// Teardown must never throw: PIXI v8's canvas-text texture pool can double-return a texture on
+// destroy (its GC may have already unloaded it while the ticker slept), which surfaces as
+// "Cannot read properties of undefined (reading 'push')" INSIDE app.destroy — and an exception in
+// a React cleanup feeds the host's error boundary, which then pointlessly rebuilds the tree the
+// user is navigating away from. The app is being discarded either way; swallow and drop the view.
+function safeDestroyApp(app: PIXI.Application): void {
+  try {
+    app.destroy({ removeView: true }, { children: true })
+  } catch {
+    try {
+      app.canvas?.remove()
+    } catch {
+      /* view already gone */
+    }
+  }
+}
+
 // `position` lets this be the whole-viewport sandbox (default 'fixed', e.g. /celebrate-text)
 // or an in-place overlay filling a positioned parent (e.g. the /celebrate opening title).
 // `exiting`: flip true to fling every letter off-screen (the /celebrate Start hand-off).
@@ -291,7 +308,7 @@ export function CelebrateBubbles({
         preference: 'webgl',
       })
       if (cancelled || !containerRef.current) {
-        app.destroy({ removeView: true }, { children: true })
+        safeDestroyApp(app)
         return
       }
       app.canvas.style.display = 'block'
@@ -382,7 +399,7 @@ export function CelebrateBubbles({
       const world: CelebrateWorld = await createCelebrateWorld(specs, w, h, STUCK_DIST * fit, UNGHOST_DIST * fit)
       if (cancelled || !containerRef.current) {
         world.world.free()
-        app.destroy({ removeView: true }, { children: true })
+        safeDestroyApp(app)
         return // bail BEFORE publishing the world, so no handle outlives this freed world
       }
       builtWorld = world
@@ -791,7 +808,7 @@ export function CelebrateBubbles({
         el.removeEventListener('pointercancel', endDrag)
         window.removeEventListener('keydown', onKey)
         app.ticker.remove(ticker)
-        app.destroy({ removeView: true }, { children: true })
+        safeDestroyApp(app)
         world.world.free()
         worldRef.current = null
         if (import.meta.env?.DEV) {
@@ -812,7 +829,7 @@ export function CelebrateBubbles({
           /* already freed */
         }
         try {
-          builtApp?.destroy({ removeView: true }, { children: true })
+          if (builtApp) safeDestroyApp(builtApp)
         } catch {
           /* already destroyed */
         }
