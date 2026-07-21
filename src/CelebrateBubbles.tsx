@@ -82,6 +82,9 @@ interface RenderLetter {
   hw: number // glyph half-extents — the grab box
   hh: number
   colliders: PxShape[] // hand-authored compound (balls + capsules) in px, for the `d` debug overlay
+  color: number // the palette colour this letter was dealt — refits re-style from THIS, not from
+  //               text.style.fill (which a custom styleFor may have made a pattern, not a number)
+  seq: number // the letter's monotonic deal order — lets styleFor vary per letter (pattern offsets)
 }
 
 // `position` lets this be the whole-viewport sandbox (default 'fixed', e.g. /celebrate-text)
@@ -107,6 +110,7 @@ export function CelebrateBubbles({
   reducedMotion,
   maxResolution = (w) => (w <= 640 ? 2 : 2.5),
   getObstacles,
+  styleFor,
   onReady,
   onError,
 }: {
@@ -155,6 +159,14 @@ export function CelebrateBubbles({
    * whenever this prop is set: a stopped ticker couldn't see a mirror coming.
    */
   getObstacles?: () => ObstaclePose[]
+  /**
+   * Custom text-style factory for the letters — patterned fills, themed strokes. Receives the
+   * letter's dealt palette colour, its slot size, and its deal order (`seq`, for per-letter
+   * pattern offsets). Defaults to the classic solid-fill letterStyle. KEEP metricStyle's metrics
+   * (face, stroke width, shadow, padding) or the layout and colliders will disagree with what's
+   * drawn. Mount-time, like `palette` — remount with a new `key` to change it.
+   */
+  styleFor?: (color: number, size: number, seq: number) => PIXI.TextStyle
   /** Fired on the first painted frame — hide your own loading/boot screen here. */
   onReady?: () => void
   /** Init failed (WebGL blocked, WASM refused). Leave your fallback UI up. */
@@ -189,7 +201,7 @@ export function CelebrateBubbles({
   // first closure and later changes are silently ignored. Changing one and seeing nothing happen
   // looks exactly like a bug in this library, so say so in dev. (`phrase` and `layout` are NOT here
   // — they are live: changing either morphs the word. `exiting` and `play` are live too.)
-  const mountProps = useRef({ hulls, palette, frame, position })
+  const mountProps = useRef({ hulls, palette, frame, position, styleFor })
   if (import.meta.env?.DEV) {
     const m = mountProps.current
     const changed = (
@@ -198,6 +210,7 @@ export function CelebrateBubbles({
         ['palette', m.palette !== palette],
         ['frame', m.frame !== frame],
         ['position', m.position !== position],
+        ['styleFor', m.styleFor !== styleFor],
       ] as const
     )
       .filter(([, did]) => did)
@@ -207,7 +220,7 @@ export function CelebrateBubbles({
         `[bubble-rapier-text] ${changed.join(', ')} changed after mount and will be IGNORED — the ` +
           'scene is built once. Remount with a different React `key` to apply it.',
       )
-      mountProps.current = { hulls, palette, frame, position } // warn once per change
+      mountProps.current = { hulls, palette, frame, position, styleFor } // warn once per change
     }
   }
 
@@ -324,10 +337,15 @@ export function CelebrateBubbles({
       // ONE build path for a letter, shared by the initial build, a resize rebuild, and any future
       // transition spawn. Divergent build paths are how a letter ends up with a collider that does
       // not match the glyph the viewer sees.
+      // Mount-time style factory — defaults to the classic solid-fill letterStyle.
+      const styleFn = styleFor ?? ((color: number, size: number) => letterStyle(color, size))
+
       const renderLetters: RenderLetter[] = []
       let colorSeq = 0 // monotonic, NOT renderLetters.length — culls splice that and colours would drift
       const specFor = (slot: Slot): { spec: LetterSpec; render: RenderLetter } => {
-        const t = new PIXI.Text({ text: slot.ch, style: letterStyle(colors[colorSeq++ % colors.length], slot.size) })
+        const seq = colorSeq++
+        const color = colors[seq % colors.length]
+        const t = new PIXI.Text({ text: slot.ch, style: styleFn(color, slot.size, seq) })
         t.anchor.set(0.5)
         app.stage.addChild(t)
         const hw = Math.max(8, t.width * 0.42)
@@ -337,7 +355,7 @@ export function CelebrateBubbles({
         t.zIndex = 1 // active letters paint in FRONT; scattered debris is dropped to 0 in a transition
         return {
           spec: { colliders, hw, hh, slotX: slot.x, slotY: slot.y },
-          render: { ch: slot.ch, text: t, hw, hh, colliders },
+          render: { ch: slot.ch, text: t, hw, hh, colliders, color, seq },
         }
       }
 
@@ -345,7 +363,7 @@ export function CelebrateBubbles({
       // recompute the grab box and hull in place. Shared by the resize re-home and the transition
       // survivor path — the glyph itself is unchanged, so its Text is reused rather than rebuilt.
       const refitLetter = (r: RenderLetter, slot: Slot): void => {
-        r.text.style = letterStyle(r.text.style.fill as number, slot.size)
+        r.text.style = styleFn(r.color, slot.size, r.seq)
         r.hw = Math.max(8, r.text.width * 0.42)
         r.hh = Math.max(8, r.text.height * 0.4)
         r.colliders = scaleHull(hullFor(slot.ch, r.hw / slot.size, r.hh / slot.size), slot.size)

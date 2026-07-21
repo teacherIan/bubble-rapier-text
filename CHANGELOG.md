@@ -2,6 +2,21 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.6.0 — 2026-07-21
+
+### Added
+
+- **`styleFor` prop — custom letter text styles (patterned fills).** A mount-time factory
+  `(color, size, seq) => PIXI.TextStyle`; defaults to the classic solid-fill `letterStyle`.
+  `seq` is the letter's deal order, for per-letter pattern offsets. Keep `metricStyle`'s
+  metrics or layout and colliders will disagree with the drawing. Letters now remember their
+  dealt colour + seq, so transition refits restyle correctly even with non-numeric fills.
+
+### Notes
+
+- An EMPTY morph target (`lines: []`) is supported and scatters every letter — a host can
+  explode the whole phrase and later fly a new one in from the edges.
+
 ## 0.5.1 — 2026-07-21
 
 ### Fixed
