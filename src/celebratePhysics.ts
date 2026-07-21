@@ -743,11 +743,17 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
       continue
     }
     calm = false // out of place (position or tilt) — not idle
-    if (state.drag || busy) {
+    if (state.drag || (busy && L.arrivedOnce)) {
       // Don't fight the user. While they HOLD a letter — or hold one of their OWN bodies over the
       // letters (`busy`, see startBodyDrag) — the blocked letters just press against the obstacle;
       // don't let the untangle ghost+drive them home through it (they'd un-ghost where the obstacle
       // sits and get ejected → a violent bounce). They re-home the instant it moves away.
+      //
+      // Only letters that HAVE arrived get this stand-down. A transition fly-in that has never
+      // reached its slot isn't being "held off" — it's being BLOCKED at the door (a busy obstacle
+      // field between its spawn edge and its slot would strand it there forever, since a wobbling
+      // field can keep `busy` true indefinitely). Never-arrived letters keep full untangle rights:
+      // the ghost-glide is precisely their mechanism for entering through a crowd.
     } else {
       L.wrongTotal++ // counts wrong frames at ANY speed (the jostled-above-PARK_V case)
       // Snappy path: PARKED-and-wrong → free fast. (A wobble can't reset wrongFrames.)

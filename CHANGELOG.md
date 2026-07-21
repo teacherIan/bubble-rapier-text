@@ -2,6 +2,16 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.6.1 — 2026-07-21
+
+### Fixed
+
+- **`busy` no longer strands transition fly-ins.** The untangle stand-down now protects only
+  letters that have ARRIVED at a slot at least once (the held-prop case it was built for). A
+  never-arrived fly-in pressed against a busy obstacle field — e.g. a wobbling blob wall that
+  keeps `busy` true indefinitely — keeps its untangle rights and ghost-glides home through the
+  crowd, instead of leaning on the first obstacle forever.
+
 ## 0.6.0 — 2026-07-21
 
 ### Added

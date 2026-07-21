@@ -279,10 +279,13 @@ describe('the self-freeing untangle', () => {
     releaseDrag(w)
   })
 
-  it('does not fight the host either: `busy` stands the untangle down', async () => {
+  it('does not fight the host either: `busy` stands the untangle down (for an ARRIVED letter)', async () => {
     const w = await settledWorld([atSlot(400, 300)])
     armEnclosureNow(w)
     const L = w.letters[0]
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT) // arrive properly first —
+    // busy protects letters the host displaced, not fly-ins it is blocking
+    // (a never-arrived letter keeps its untangle rights; see the suite below).
     for (let i = 0; i < 200; i++) {
       wedge(w, 0, 100, 100)
       stepCelebrate(w, DT, true) // host is holding one of its own bodies over the letters
@@ -385,5 +388,37 @@ describe('host obstacles (kinematic mirrors)', () => {
     moveObstacle(o, 100, 100, 55) // real growth — applied
     expect(o.r).toBe(55)
     removeObstacle(w, o)
+  })
+})
+
+describe('busy vs transition fly-ins', () => {
+  it('a never-arrived letter blocked under persistent busy still ghosts home', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT)
+    // A fly-in: retarget marks it never-arrived; park it far from its slot, as
+    // if pressed against an obstacle field it cannot push through.
+    retargetLetter(w, 0, 400, 300)
+    const L = w.letters[0]
+    L.body.setTranslation({ x: 60, y: 60 }, true)
+    for (let i = 0; i < 120 && !L.ghost; i++) {
+      L.body.setTranslation({ x: 60, y: 60 }, true)
+      L.body.setLinvel({ x: 0, y: 0 }, true)
+      stepCelebrate(w, DT, true) // busy the WHOLE time (a wobbling mirror field)
+    }
+    expect(L.ghost, 'a blocked fly-in must ghost-glide home even under busy').toBe(true)
+  })
+
+  it('an ARRIVED letter pressed under busy is left alone (no ghost-through)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT) // arrive properly
+    const L = w.letters[0]
+    for (let i = 0; i < 120; i++) {
+      L.body.setTranslation({ x: 200, y: 300 }, true) // shoved off + held by a "prop"
+      L.body.setLinvel({ x: 0, y: 0 }, true)
+      stepCelebrate(w, DT, true)
+    }
+    expect(L.ghost, 'busy must stand the untangle down for an arrived letter').toBe(false)
   })
 })
