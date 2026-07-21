@@ -122,6 +122,7 @@ export interface CelebrateWorld {
   floorBody: RAPIER.RigidBody | null // the bottom wall, removed on exit so letters fall off-screen
   walls: RAPIER.RigidBody[] // all four enclosure walls — removed wholesale on a word-to-word transition
   exiting: boolean // true once dropping off-screen (springs off, floor removed) — the /celebrate Start exit
+  dead: boolean // a wasm panic poisoned this world: stepping stops (render freezes; the page must live on)
   drag: DragState | null
 }
 
@@ -288,7 +289,7 @@ export async function createCelebrateWorld(
 
   const letters: LetterBody[] = specs.map((spec) => createLetterBody(rapier, world, spec, w, h))
 
-  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, settledFrames: 0, floorBody: null, walls: [], exiting: false, drag: null }
+  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, settledFrames: 0, floorBody: null, walls: [], exiting: false, dead: false, drag: null }
 }
 
 // ── Transition primitives (re-layout to a new phrase) ───────────────────────────────────
@@ -655,7 +656,43 @@ export function exitCelebrate(state: CelebrateWorld): void {
  * rather than a field on the world so it can never go stale: the host asserts it fresh each frame.
  */
 export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): void {
+  if (state.dead) return
+  try {
+    stepCelebrateInner(state, dt, busy)
+  } catch (err) {
+    // A Rapier wasm panic ("unreachable executed") poisons the whole wasm instance — there is no
+    // recovering this world. Freeze it (letters hold their last pose) instead of letting the
+    // exception re-fire out of the host ticker every frame and take the page down with it.
+    state.dead = true
+    const forensic = state.letters.map((L, i) => {
+      const p = L.body.translation()
+      const v = L.body.linvel()
+      return { i, x: +p.x.toFixed(1), y: +p.y.toFixed(1), vx: +v.x.toFixed(1), vy: +v.y.toFixed(1), ghost: L.ghost, discarded: L.discarded }
+    })
+    console.error('[bubble-rapier-text] physics world died mid-step; freezing letters', err, forensic)
+  }
+}
+
+function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): void {
   const { rapier, world, letters } = state
+
+  // Non-finite sentinel: a NaN/Infinity pose fed to the solver is how wasm panics start. Catch the
+  // injection the frame it happens — name the letter, reset it to its slot at rest — so a math bug
+  // upstream degrades to one visible snap instead of a dead world.
+  for (let i = 0; i < letters.length; i++) {
+    const L = letters[i]
+    const p = L.body.translation()
+    const v = L.body.linvel()
+    const r = L.body.rotation()
+    const av = L.body.angvel()
+    if (!Number.isFinite(p.x + p.y + v.x + v.y + r + av)) {
+      console.error('[bubble-rapier-text] non-finite pose; resetting letter to slot', { i, x: p.x, y: p.y, vx: v.x, vy: v.y, rot: r, angvel: av, tx: L.tx, ty: L.ty, ghost: L.ghost, discarded: L.discarded })
+      L.body.setTranslation({ x: L.tx, y: L.ty }, true)
+      L.body.setRotation(0, true)
+      L.body.setLinvel({ x: 0, y: 0 }, true)
+      L.body.setAngvel(0, true)
+    }
+  }
 
   // Exiting: no springs/untangle/drag — just step, so gravity pulls the letters down through
   // the (now-removed) floor and off the bottom.

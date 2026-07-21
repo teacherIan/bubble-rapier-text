@@ -2,6 +2,16 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.7.2 — 2026-07-21
+
+### Fixed
+
+- **A Rapier wasm panic can no longer freeze the host page.** `stepCelebrate` wraps the step:
+  on the first panic the world is marked dead and freezes in place (letters hold their last pose)
+  instead of re-throwing out of the host ticker every frame. A pre-step sentinel also catches any
+  non-finite letter pose the frame it appears, logs a forensic line naming the letter, and resets
+  it to its slot — so an upstream math bug degrades to one visible snap, not a dead world.
+
 ## 0.7.1 — 2026-07-21
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "bubble-rapier-text",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Physics-driven \"Celebrate your hard work\" bubble text \u2014 PIXI bubble-letters on Rapier rigid bodies with hand-authored collision hulls, plus the interactive hull editor.",
   "type": "module",
   "license": "MIT",
