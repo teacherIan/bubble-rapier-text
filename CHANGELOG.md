@@ -2,6 +2,17 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.8.1 — 2026-07-21
+
+### Fixed
+
+- **The panic guard survives its own diagnostics.** The forensic dump reads the just-poisoned
+  wasm world; if those reads trap, the freeze now still lands (dump degrades to a placeholder).
+- **The component honors a dead world**: the ticker stops instead of reading letter bodies from
+  poisoned wasm memory every frame; letters hold their last painted pose.
+- `safeDestroyApp` logs what it swallows — a teardown throw is survivable, not invisible.
+- The hand-off lifecycle test's imports were mis-rooted (resolved only via a vite-node fallback).
+
 ## 0.8.0 — 2026-07-21
 
 Ports from little_striders — the app this library was extracted from had kept improving its

@@ -95,7 +95,10 @@ interface RenderLetter {
 function safeDestroyApp(app: PIXI.Application): void {
   try {
     app.destroy({ removeView: true }, { children: true })
-  } catch {
+  } catch (err) {
+    // Known case: PIXI v8's canvas-text pool double-returns a texture. Log it —
+    // a swallowed teardown error must still be visible to whoever regresses it.
+    console.warn('[bubble-rapier-text] app.destroy threw during teardown (view dropped manually)', err)
     try {
       app.canvas?.remove()
     } catch {
@@ -596,6 +599,13 @@ export function CelebrateBubbles({
         return moved
       }
       const ticker = (t: PIXI.Ticker) => {
+        // A panicked wasm world is frozen by stepCelebrate's guard — stop reading
+        // bodies (each read can trap on poisoned memory) and stop the ticker;
+        // the letters hold their last painted pose.
+        if (world.dead) {
+          app.ticker.stop()
+          return
+        }
         // Gate only the SIMULATION on `play`, never the position sync below. The sync is the only
         // writer of text.position, so returning early here left every glyph at its default (0,0) —
         // a pile in the top-left corner, painted at exactly the moment onReady tells the host to

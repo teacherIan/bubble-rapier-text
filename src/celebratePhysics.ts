@@ -688,11 +688,18 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
     // recovering this world. Freeze it (letters hold their last pose) instead of letting the
     // exception re-fire out of the host ticker every frame and take the page down with it.
     state.dead = true
-    const forensic = state.letters.map((L, i) => {
-      const p = L.body.translation()
-      const v = L.body.linvel()
-      return { i, x: +p.x.toFixed(1), y: +p.y.toFixed(1), vx: +v.x.toFixed(1), vy: +v.y.toFixed(1), ghost: L.ghost, discarded: L.discarded }
-    })
+    // The dump itself reads the just-poisoned wasm world — it may trap too.
+    // The freeze must survive its own diagnostics.
+    let forensic: unknown = 'unreadable (wasm poisoned)'
+    try {
+      forensic = state.letters.map((L, i) => {
+        const p = L.body.translation()
+        const v = L.body.linvel()
+        return { i, x: +p.x.toFixed(1), y: +p.y.toFixed(1), vx: +v.x.toFixed(1), vy: +v.y.toFixed(1), ghost: L.ghost, discarded: L.discarded }
+      })
+    } catch {
+      /* keep the string placeholder */
+    }
     console.error('[bubble-rapier-text] physics world died mid-step; freezing letters', err, forensic)
   }
 }

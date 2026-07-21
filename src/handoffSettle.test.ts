@@ -9,9 +9,9 @@ import {
   removeWalls,
   armEnclosureNow,
   type LetterSpec,
-} from './src/celebratePhysics'
-import { GLYPH_HULLS, scaleHull } from './src/glyphHulls'
-import { ensureRapierInitialized } from './src/lib/physics/rapierInit'
+} from './celebratePhysics'
+import { GLYPH_HULLS, scaleHull } from './glyphHulls'
+import { ensureRapierInitialized } from './lib/physics/rapierInit'
 
 const DT = 1 / 60
 const W = 1364, H = 883
