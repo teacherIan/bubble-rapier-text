@@ -29,6 +29,9 @@ export interface Slot {
   x: number
   y: number
   size: number
+  /** Pin this slot's fill colour instead of taking the next dealt palette colour. The pin only
+   *  applies when the letter is CREATED for this slot; a survivor keeps its existing colour. */
+  color?: number
 }
 
 export interface LayoutResult {
@@ -63,6 +66,10 @@ export interface LayoutOptions {
   lineXs?: (vw: number, count: number, sizes: number[]) => number[]
   /** Push the lines to the top and bottom edges instead of centring (default lineYs only). */
   frame?: boolean
+  /** Pin per-slot colours: return a colour for (lineIndex, charIndex, ch) or undefined to fall
+   *  back to the dealt palette. charIndex counts every character of the line, spaces included —
+   *  align it with your own per-character HUD indexing. */
+  slotColor?: (lineIndex: number, charIndex: number, ch: string) => number | undefined
   /** Carried onto every LayoutResult: letters MISSING in a transition to this layout spawn at
    *  their slots (an in-place materialize) rather than flying in from off-screen. The stage for
    *  a seamless swap with a non-physics twin, before a later layout moves the letters for real. */
@@ -112,6 +119,7 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
     glyphHeightRatio = 1.0,
     lineYs,
     lineXs,
+    slotColor,
     frame = false,
     spawnAtSlot = false,
   } = opts
@@ -146,7 +154,8 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
         const x = cursor + wdt / 2
         cursor += wdt
         if (ch === ' ') return
-        slots.push({ ch, x, y: ys[li], size })
+        const color = slotColor?.(li, ci, ch)
+        slots.push(color === undefined ? { ch, x, y: ys[li], size } : { ch, x, y: ys[li], size, color })
       })
     })
 

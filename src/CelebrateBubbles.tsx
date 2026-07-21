@@ -344,7 +344,8 @@ export function CelebrateBubbles({
       let colorSeq = 0 // monotonic, NOT renderLetters.length — culls splice that and colours would drift
       const specFor = (slot: Slot): { spec: LetterSpec; render: RenderLetter } => {
         const seq = colorSeq++
-        const color = colors[seq % colors.length]
+        // A slot may PIN its colour (HUD hand-off colour continuity); otherwise deal the next.
+        const color = slot.color ?? colors[seq % colors.length]
         const t = new PIXI.Text({ text: slot.ch, style: styleFn(color, slot.size, seq) })
         t.anchor.set(0.5)
         app.stage.addChild(t)

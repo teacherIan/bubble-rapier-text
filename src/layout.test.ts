@@ -118,6 +118,19 @@ describe('createLineLayout', () => {
     expect(layout(600, 900).slots[0].size).toBeCloseTo(60)
   })
 
+  it('slotColor pins per-slot colours; unpinned slots stay colourless', () => {
+    const layout = createLineLayout({
+      lines: [{ text: 'AB C' }],
+      measure,
+      slotColor: (li, ci) => (ci === 0 ? 0x112233 : undefined),
+    })
+    const { slots } = layout(1200, 800)
+    expect(slots[0].color).toBe(0x112233)
+    expect(slots[1].color).toBeUndefined()
+    // charIndex counts spaces: 'C' is char 3 of the line even though it's slot 2.
+    expect(slots[2].ch).toBe('C')
+  })
+
   it('carries spawnAtSlot onto the result (default absent-or-false)', () => {
     const hud = createLineLayout({ lines: [{ text: 'N' }], measure, spawnAtSlot: true })
     expect(hud(1200, 800).spawnAtSlot).toBe(true)

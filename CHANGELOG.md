@@ -2,6 +2,15 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.7.1 — 2026-07-21
+
+### Added
+
+- **`LayoutOptions.slotColor` / `Slot.color` — per-slot pinned colours.** The dealt-palette
+  counter is monotonic across rebuilds, so a HUD hand-off could not predict which colours new
+  letters would draw; a layout can now pin them (colour continuity with the HUD twin). Pins apply
+  only at letter creation — survivors keep the colour they already wear.
+
 ## 0.7.0 — 2026-07-21
 
 ### Added
