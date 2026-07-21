@@ -350,11 +350,18 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
   L.body.enableCcd(true)
 }
 
-/** Fling a letter off-screen: kill its homing spring (discarded) and give it a strong random velocity
- *  + spin. Make it pass through everything (so it can't get caught in the re-forming text) but KEEP its
- *  collider enabled — see setLetterPassthrough: disabling the collider zeroes the mass, which kills
- *  gravity and lets the velocity decay to zero, freezing the letter on-screen instead of arcing off. */
-export function scatterLetter(state: CelebrateWorld, index: number): void {
+/**
+ * Fling a letter off-screen: kill its homing spring (discarded), give it a strong random velocity +
+ * spin, and let gravity carry it off. The collider stays ENABLED either way — disabling it would zero
+ * the body's mass, which kills gravity and freezes the letter on-screen (see setLetterPassthrough).
+ *
+ * `solid` (default true) is the FUN: the flung letter stays solid and BONKS the re-forming word and
+ * the other debris on its way out — chaotic and lively. A straggler that wedges on-screen is switched
+ * to pass-through after DISCARD_PHASE_FRAMES (see stepCelebrate) so it can still escape, and the cull
+ * backstop sweeps whatever remains. Pass `{ solid: false }` for the calm morph — the letter passes
+ * through everything from frame one and just sails off without disturbing the forming word.
+ */
+export function scatterLetter(state: CelebrateWorld, index: number, opts: { solid?: boolean } = {}): void {
   const L = state.letters[index]
   if (!L) return
   // Already flung: leave it alone. Re-flinging an airborne letter resets its cull lease
@@ -363,7 +370,8 @@ export function scatterLetter(state: CelebrateWorld, index: number): void {
   if (L.discarded) return
   L.discarded = true
   L.discardFrames = 0
-  setLetterPassthrough(L) // collide with nothing, BUT keep mass → gravity still pulls it off-screen
+  if (opts.solid === false) setLetterPassthrough(L) // collide with nothing — the calm morph
+  else setLetterSolid(L, true) // SOLID → bonks the forming word + other debris on the way off (the fun)
   L.body.enableCcd(false) // no longer needs continuous collision — it's leaving the screen
   L.body.setLinearDamping(0) // 0 so gravity keeps accelerating it off-screen (it won't slow + sleep mid-air)
   const ang = Math.random() * Math.PI * 2
@@ -373,6 +381,9 @@ export function scatterLetter(state: CelebrateWorld, index: number): void {
 }
 
 const CULL_MARGIN = 220 // px beyond the live screen edge before a flung letter is collected
+const DISCARD_PHASE_FRAMES = 150 // ~2.5s a solid flung letter may BONK the forming word; a straggler
+// still on-screen after this drops to pass-through (see stepCelebrate) so it stops disturbing the word
+// and can leave. Well under DISCARD_CULL_FRAMES so the escape happens before the hard sweep.
 const DISCARD_CULL_FRAMES = 420 // ~7s discarded, wherever it is — the backstop (see cullDiscarded)
 
 /**
@@ -611,6 +622,9 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
     const L = letters[i]
     if (L.discarded) {
       L.discardFrames++ // the cull's backstop: see cullDiscarded
+      // A solid-flung straggler (still !ghost, so still bonking) that hasn't left after its bonk
+      // window drops to pass-through: it stops jostling the forming word and can slip off an edge.
+      if (!L.ghost && L.discardFrames > DISCARD_PHASE_FRAMES) setLetterPassthrough(L)
       calm = false // still flying off-screen; the host must keep stepping until it is culled
       continue // no spring/untangle — just gravity
     }
