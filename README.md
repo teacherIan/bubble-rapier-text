@@ -93,6 +93,7 @@ different React `key` to change those.
 | `scatterStyle`| `'bonk' | 'through'`      | `'bonk'`  | How transition debris flies off. `bonk` keeps flung letters SOLID so they collide with the forming word (chaotic, fun); `through` passes them through for a calm morph. |
 | `layout`      | `LayoutStrategy`          | derived from `phrase` | **Live.** Full control of slot geometry; overrides `phrase`. Changing it morphs, same as `phrase`. See `createLineLayout`. |
 | `idleFrames`  | `number \| false`         | `110`     | Stop the PIXI ticker after this many fully-calm frames; `false` never stops. Wakes on pointer, resize, and exit. |
+| `getObstacles` | `() => ObstaclePose[]`   | —         | Kinematic mirrors of bodies simulated in ANOTHER world — letters bounce off them (see [Bouncing letters off another simulation](#bouncing-letters-off-another-simulation)). Polled per frame; disables the idle gate while set. |
 | `reducedMotion` | `boolean`               | the media query | Force the no-rain path: letters start on their slots and the cage goes up immediately. |
 | `maxResolution` | `number \| (w) => number` | `2` ≤640px, else `2.5` | Cap on `devicePixelRatio`. A phone at DPR 3 renders 9× the pixels for no visible gain. |
 | `background`  | `string`                  | a soft gradient | CSS background behind the canvas. `transparent` wins over it. |
@@ -176,6 +177,28 @@ setRapierLoader(ensureRapierInitialized)
 `setRapierLoader` throws if the library's own init already started — call it in the module that
 lazy-imports the component, not in an effect. One Rapier instance means one WASM decode and no
 cross-instance `instanceof` misses between your bodies and the library's.
+
+### Bouncing letters off another simulation
+
+Two Rapier worlds can never collide — but if your page also runs its OWN sim (soft-body blobs in
+a worker, a mascot), the letters can still bounce off it via **kinematic mirrors**: hand the
+component a getter that re-states the foreign bodies' poses each frame, in this component's
+CSS-px space:
+
+```tsx
+const posesRef = useRef<ObstaclePose[]>([])   // your other sim writes here at its own cadence
+const getObstacles = useCallback(() => posesRef.current, [])
+
+<CelebrateBubbles getObstacles={getObstacles} />
+```
+
+Mirrors are reconciled by `id` (new id → added, missing id → removed, `r` breathes in place).
+The solver treats them as infinitely heavy: letters carom off and inherit momentum from a moving
+mirror, and can never push back — the foreign sim stays the authority. While any mirror is moving
+the wedged-letter untangle stands down (a pressed letter pushes instead of ghosting through), and
+the idle gate is disabled whenever the prop is set, because a stopped ticker couldn't see a
+mirror coming. Driving the sim yourself instead? The same primitives are exported:
+`addObstacle` / `moveObstacle` / `removeObstacle`, plus `busy` on `stepCelebrate`.
 
 ## Authoring collision hulls
 

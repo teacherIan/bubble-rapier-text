@@ -39,12 +39,19 @@ export {
   startBodyDrag,
   moveBodyDrag,
   endBodyDrag,
+  // kinematic mirrors of bodies simulated in ANOTHER world (a blob ring in a worker):
+  // letters carom off them, they never yield — the foreign sim is the authority
+  addObstacle,
+  moveObstacle,
+  removeObstacle,
   GRAVITY,
   type LetterSpec,
   type LetterBody,
   type CelebrateWorld,
   type DragState,
   type MouseJoint,
+  type Obstacle,
+  type ObstaclePose,
 } from './celebratePhysics'
 
 // ── Glyph collision hulls + helpers (author / scale / draw) ───────────────────

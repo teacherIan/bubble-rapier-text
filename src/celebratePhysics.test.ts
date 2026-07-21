@@ -11,6 +11,9 @@ import {
   removeWalls,
   startLetterDrag,
   releaseDrag,
+  addObstacle,
+  moveObstacle,
+  removeObstacle,
   type CelebrateWorld,
   type LetterSpec,
 } from './celebratePhysics'
@@ -347,5 +350,40 @@ describe('scatterLetter fling styles', () => {
       if (cullDiscarded(w).length) break
     }
     expect(w.letters).toHaveLength(0)
+  })
+})
+
+describe('host obstacles (kinematic mirrors)', () => {
+  it('a mirror swept through a settled letter shoves it aside', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT) // settle on the slot
+    const before = w.letters[0].body.translation()
+
+    // Sweep a 60px mirror through the slot from the left, at mirror-motion `busy`.
+    const o = addObstacle(w, 200, 300, 60)
+    for (let i = 0; i < 90; i++) {
+      moveObstacle(o, 200 + i * 4, 300) // 240 px/s — arrives at the slot around frame 50
+      stepCelebrate(w, DT, true)
+    }
+    const during = w.letters[0].body.translation()
+    const pushed = Math.hypot(during.x - before.x, during.y - before.y)
+    expect(pushed, 'the letter must be shoved off its slot by the passing mirror').toBeGreaterThan(30)
+    expect(w.letters[0].ghost, 'busy stands the untangle down — the letter must never ghost through the mirror').toBe(false)
+
+    // Mirror leaves + goes still: the slot spring brings the letter home and the world re-settles.
+    removeObstacle(w, o)
+    for (let i = 0; i < 600 && w.settledFrames < 30; i++) stepCelebrate(w, DT)
+    expect(w.settledFrames, 'the world must re-settle once the mirror is gone').toBeGreaterThanOrEqual(30)
+  })
+
+  it('a breathing mirror resizes in place without recreating the handle', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    const o = addObstacle(w, 100, 100, 40)
+    moveObstacle(o, 100, 100, 40.2) // sub-pixel breath — skipped
+    expect(o.r).toBe(40)
+    moveObstacle(o, 100, 100, 55) // real growth — applied
+    expect(o.r).toBe(55)
+    removeObstacle(w, o)
   })
 })

@@ -2,6 +2,19 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.5.0 — 2026-07-20
+
+### Added
+
+- **Host obstacles — letters bounce off ANOTHER simulation.** New `getObstacles` prop: a
+  per-frame getter of `{ id, x, y, r }` poses mirrored into the letter world as kinematic
+  balls (reconciled by id, radius breathes in place). Letters carom off them and inherit
+  momentum from movers; mirrors never yield — the foreign sim is the authority. Mirror motion
+  asserts `busy` internally (per-mirror 2px hysteresis) so pressed letters push instead of
+  ghosting through, and the idle gate is disabled while the prop is set (a stopped ticker
+  couldn't see a mirror coming). Framework-free primitives exported too:
+  `addObstacle` / `moveObstacle` / `removeObstacle` + `Obstacle` / `ObstaclePose`.
+
 ## 0.4.1 — 2026-07-20
 
 ### Fixed

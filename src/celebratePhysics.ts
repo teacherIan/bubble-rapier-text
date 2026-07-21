@@ -526,6 +526,69 @@ export function endBodyDrag(state: CelebrateWorld, m: MouseJoint): void {
   detachMouseJoint(state, m)
 }
 
+// ── Host obstacles: kinematic mirrors of bodies simulated ELSEWHERE ─────────────────────────────
+// The letters live in THIS world; anything else on the same screen (a soft-body blob ring, a
+// mascot in a worker sim) lives in its own. Two Rapier worlds can never collide — but a kinematic
+// mirror can: the host re-states the foreign body's pose here every frame, and the solver treats
+// it as an infinitely-heavy mover, so letters carom off it and can never push it back. That
+// one-way coupling is the honest contract: the mirror's home simulation is the authority.
+//
+// Same idiom as the drag anchor (attachMouseJoint): kinematicPositionBased +
+// setNextKinematicTranslation, so Rapier derives the mirror's velocity from the pose delta and
+// letters inherit real momentum from a moving mirror rather than teleport-overlap pops.
+//
+// While mirrors are MOVING, pass `busy: true` to stepCelebrate (same rule as a held prop, above):
+// letters pressed against a mover would otherwise be read as wedged, ghosted, and driven home
+// THROUGH it. When the mirrors are still, drop busy so the untangle can free a genuinely
+// wedged letter.
+
+/** One kinematic mirror. You own the handle; remove it with removeObstacle. */
+export interface Obstacle {
+  body: RAPIER.RigidBody
+  collider: RAPIER.Collider
+  /** Current mirror radius (px) — tracked so sub-pixel radius churn skips the collider write. */
+  r: number
+}
+
+/** A foreign body's pose, in this world's px space. `id` keys per-frame reconciliation. */
+export interface ObstaclePose {
+  id: string
+  x: number
+  y: number
+  r: number
+}
+
+/** Add a circular kinematic mirror at (x, y) with radius r — all px. Default collision groups,
+ *  so it collides with every solid letter (and 'bonk' debris); letter-grade restitution. */
+export function addObstacle(state: CelebrateWorld, x: number, y: number, r: number): Obstacle {
+  const body = state.world.createRigidBody(
+    state.rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y),
+  )
+  const collider = state.world.createCollider(
+    state.rapier.ColliderDesc.ball(Math.max(1, r)).setRestitution(RESTITUTION),
+    body,
+  )
+  return { body, collider, r: Math.max(1, r) }
+}
+
+/** Re-state the mirror's pose for the next step. Radius updates in place (a breathing blob),
+ *  skipping writes for sub-pixel changes. */
+export function moveObstacle(o: Obstacle, x: number, y: number, r?: number): void {
+  o.body.setNextKinematicTranslation({ x, y })
+  if (r !== undefined) {
+    const next = Math.max(1, r)
+    if (Math.abs(next - o.r) > 0.5) {
+      o.collider.setRadius(next)
+      o.r = next
+    }
+  }
+}
+
+/** Remove a mirror (its collider goes with the body). */
+export function removeObstacle(state: CelebrateWorld, o: Obstacle): void {
+  state.world.removeRigidBody(o.body)
+}
+
 /**
  * Add the enclosure immediately, skipping the entrance delay.
  *

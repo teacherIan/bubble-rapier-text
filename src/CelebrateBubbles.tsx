@@ -17,6 +17,11 @@ import {
   resizeWorld,
   removeWalls,
   scatterLetter,
+  addObstacle,
+  moveObstacle,
+  removeObstacle,
+  type Obstacle,
+  type ObstaclePose,
   type LetterSpec,
   type CelebrateWorld,
 } from './celebratePhysics'
@@ -65,6 +70,12 @@ const FIXED_DT = 1 / 60
 const MAX_SUBSTEPS = 3
 const SPIRAL_CLAMP = 0.25
 
+// A host obstacle counts as MOVING (→ busy: untangle stands down) once it strays this far from
+// the last pose that counted. Hysteresis, not a per-frame delta: a calm ring's sub-pixel wobble
+// must not hold busy forever (busy starves the wedged-letter self-heal), while a slow drift must
+// still accumulate into a real push instead of hiding under the threshold.
+const OBSTACLE_WAKE_PX = 2
+
 interface RenderLetter {
   ch: string // the glyph — needed to plan a word-to-word transition (which live letter claims which new slot)
   text: PIXI.Text
@@ -95,6 +106,7 @@ export function CelebrateBubbles({
   idleFrames = 110,
   reducedMotion,
   maxResolution = (w) => (w <= 640 ? 2 : 2.5),
+  getObstacles,
   onReady,
   onError,
 }: {
@@ -133,6 +145,16 @@ export function CelebrateBubbles({
   reducedMotion?: boolean
   /** Cap on devicePixelRatio. A number, or a function of the viewport width. */
   maxResolution?: number | ((width: number) => number)
+  /**
+   * Kinematic mirrors of bodies simulated ELSEWHERE (a blob ring in a worker, a mascot), polled
+   * every ticker frame — a getter, not state, so 60fps poses never re-render anything (hand a
+   * stable function reading a ref). Poses are px in THIS component's box; ids key reconciliation
+   * (new id → mirror added, missing id → removed). Letters carom off mirrors; mirrors never
+   * yield — the foreign sim is the authority. While any mirror is moving the untangle stands
+   * down (a pressed letter pushes instead of ghosting through), and the idle gate is disabled
+   * whenever this prop is set: a stopped ticker couldn't see a mirror coming.
+   */
+  getObstacles?: () => ObstaclePose[]
   /** Fired on the first painted frame — hide your own loading/boot screen here. */
   onReady?: () => void
   /** Init failed (WebGL blocked, WASM refused). Leave your fallback UI up. */
@@ -150,6 +172,8 @@ export function CelebrateBubbles({
   onReadyRef.current = onReady
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+  const getObstaclesRef = useRef(getObstacles)
+  getObstaclesRef.current = getObstacles
   // Published by the build effect so the `exiting` effect below can restart a stopped ticker.
   const wakeRef = useRef<(() => void) | null>(null)
   // `phrase` and `layout` are LIVE: changing either morphs the current word into the new one
@@ -457,6 +481,47 @@ export function CelebrateBubbles({
       // letters mid-fall. Reduced motion has nothing to wait for, so it starts immediately.
       let started = reduced
       let announcedReady = false
+      // Host obstacle mirrors, reconciled against getObstacles() by id each frame. Lives in this
+      // closure so it dies with the world.
+      const obstacles = new Map<string, { o: Obstacle; lastX: number; lastY: number; lastR: number }>()
+      const obstacleIds = new Set<string>()
+      // Pull the host's foreign-body poses and re-state them as kinematic mirrors. Returns whether
+      // any mirror MOVED (per OBSTACLE_WAKE_PX hysteresis) — that is this frame's `busy`.
+      const syncObstacles = (): boolean => {
+        const poses = getObstaclesRef.current?.()
+        if (!poses) return false
+        let moved = false
+        obstacleIds.clear()
+        for (const p of poses) {
+          obstacleIds.add(p.id)
+          const e = obstacles.get(p.id)
+          if (!e) {
+            // Born at its first known pose — never parked at (0,0) waiting for data.
+            obstacles.set(p.id, { o: addObstacle(world, p.x, p.y, p.r), lastX: p.x, lastY: p.y, lastR: p.r })
+            continue
+          }
+          moveObstacle(e.o, p.x, p.y, p.r)
+          if (
+            Math.abs(p.x - e.lastX) > OBSTACLE_WAKE_PX ||
+            Math.abs(p.y - e.lastY) > OBSTACLE_WAKE_PX ||
+            Math.abs(p.r - e.lastR) > OBSTACLE_WAKE_PX
+          ) {
+            e.lastX = p.x
+            e.lastY = p.y
+            e.lastR = p.r
+            moved = true
+          }
+        }
+        if (obstacles.size > obstacleIds.size) {
+          for (const [id, e] of obstacles) {
+            if (!obstacleIds.has(id)) {
+              removeObstacle(world, e.o)
+              obstacles.delete(id)
+            }
+          }
+        }
+        return moved
+      }
       const ticker = (t: PIXI.Ticker) => {
         // Gate only the SIMULATION on `play`, never the position sync below. The sync is the only
         // writer of text.position, so returning early here left every glyph at its default (0,0) —
@@ -465,10 +530,13 @@ export function CelebrateBubbles({
         const simulate = started || playRef.current
         if (simulate && !started) started = true
         if (simulate) {
+          // Once per FRAME, not per substep: the host's poses can't change mid-frame, and
+          // setNextKinematicTranslation spreads one pose delta across however many steps run.
+          const busy = syncObstacles()
           acc += Math.min(SPIRAL_CLAMP, t.deltaMS / 1000)
           let steps = 0
           while (acc >= FIXED_DT && steps < MAX_SUBSTEPS) {
-            stepCelebrate(world, FIXED_DT)
+            stepCelebrate(world, FIXED_DT, busy)
             acc -= FIXED_DT
             steps += 1
           }
@@ -511,7 +579,11 @@ export function CelebrateBubbles({
         // `started` is part of the condition on purpose: while the host withholds `play` we never
         // call stepCelebrate, so settledFrames stays frozen at 0 and could never reach the
         // threshold — the ticker would spin at 60fps doing nothing for as long as the host waits.
-        if (idleFrames !== false && started && !world.drag && world.settledFrames > idleFrames) {
+        //
+        // An obstacle source disables the gate outright: mirrors are POLLED, so a stopped ticker
+        // would never see a foreign body coming and letters would sleep through the hit. The host
+        // that wires obstacles is animating that other sim anyway — its screen is not idle.
+        if (idleFrames !== false && started && !world.drag && !getObstaclesRef.current && world.settledFrames > idleFrames) {
           app.ticker.stop()
         }
       }
