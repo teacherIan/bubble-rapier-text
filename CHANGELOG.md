@@ -2,6 +2,22 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.7.0 — 2026-07-21
+
+### Added
+
+- **HUD hand-off primitives** — three small pieces that together let a non-physics HUD element
+  (a corner odometer) hand its glyphs to the physics world and have them travel on the sim:
+  - `LayoutOptions.lineXs` — per-line centre **x** (mirrors `lineYs`; default stays centred),
+    for edge-anchored lines.
+  - `LayoutOptions.baseSize` now also accepts `(vw, vh) => number`, so a line's size can be
+    derived from the live viewport (e.g. matching a sibling HUD element's font size).
+  - `LayoutOptions.spawnAtSlot` (carried onto `LayoutResult`) — letters MISSING in a transition
+    to this layout materialize AT their slots, upright and at rest, instead of flying in from an
+    edge. Stage the swap under the hidden HUD twin, then transition to the real layout: the same
+    bodies retarget and physically travel there.
+  - `addLetter(state, spec, atSlot?)` gained the matching optional parameter.
+
 ## 0.6.1 — 2026-07-21
 
 ### Fixed

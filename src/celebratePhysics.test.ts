@@ -11,6 +11,7 @@ import {
   removeWalls,
   startLetterDrag,
   releaseDrag,
+  addLetter,
   addObstacle,
   moveObstacle,
   removeObstacle,
@@ -420,5 +421,27 @@ describe('busy vs transition fly-ins', () => {
       stepCelebrate(w, DT, true)
     }
     expect(L.ghost, 'busy must stand the untangle down for an arrived letter').toBe(false)
+  })
+})
+
+describe('addLetter spawn placement', () => {
+  it('default: spawns OUTSIDE the viewport (the fly-in entrance)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    const i = addLetter(w, atSlot(200, 200))
+    const p = w.letters[i].body.translation()
+    const inside = p.x >= 0 && p.x <= w.w && p.y >= 0 && p.y <= w.h
+    expect(inside).toBe(false)
+  })
+
+  it('atSlot: materializes exactly at its slot, upright and at rest', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    const i = addLetter(w, atSlot(200, 200), true)
+    const L = w.letters[i]
+    const p = L.body.translation()
+    expect(p.x).toBeCloseTo(200)
+    expect(p.y).toBeCloseTo(200)
+    expect(L.body.rotation()).toBeCloseTo(0)
+    const v = L.body.linvel()
+    expect(Math.hypot(v.x, v.y)).toBeLessThan(0.001)
   })
 })

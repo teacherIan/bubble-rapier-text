@@ -94,4 +94,34 @@ describe('createLineLayout', () => {
     const ys = [...new Set(slots.map((s) => s.y))].sort((a, b) => a - b)
     expect(ys[1] - ys[0]).toBeGreaterThan(Math.max(...sizes) * 0.5)
   })
+
+  it('lineXs anchors each line about its own centre x, not the viewport centre', () => {
+    const layout = createLineLayout({
+      lines: [{ text: 'HUD' }],
+      measure,
+      lineXs: () => [200],
+    })
+    const { slots } = layout(1200, 800)
+    const xs = slots.map((s) => s.x)
+    const centre = (Math.min(...xs) + Math.max(...xs)) / 2
+    expect(centre).toBeCloseTo(200, 5)
+  })
+
+  it('baseSize accepts a function of the live viewport', () => {
+    const layout = createLineLayout({
+      lines: [{ text: 'N' }],
+      measure,
+      baseSize: (vw, vh) => Math.min(vw, vh) * 0.1,
+      widthBudget: 1,
+    })
+    expect(layout(1200, 800).slots[0].size).toBeCloseTo(80)
+    expect(layout(600, 900).slots[0].size).toBeCloseTo(60)
+  })
+
+  it('carries spawnAtSlot onto the result (default absent-or-false)', () => {
+    const hud = createLineLayout({ lines: [{ text: 'N' }], measure, spawnAtSlot: true })
+    expect(hud(1200, 800).spawnAtSlot).toBe(true)
+    const normal = createLineLayout({ lines: [{ text: 'N' }], measure })
+    expect(normal(1200, 800).spawnAtSlot).toBe(false)
+  })
 })

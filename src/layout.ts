@@ -37,14 +37,17 @@ export interface LayoutResult {
   fit: number
   /** Resolved font size per line, in px. */
   sizes: number[]
+  /** Transition hint: new letters materialize AT their slots instead of flying in from an edge. */
+  spawnAtSlot?: boolean
 }
 
 export interface LayoutOptions {
   /** Lines, or a function of viewport width (e.g. to stack more lines on a phone). */
   lines: Line[] | ((vw: number) => Line[])
   measure: Measure
-  /** Font size of a weight-1 line before fitting. */
-  baseSize?: number
+  /** Font size of a weight-1 line before fitting. A function form sees the live viewport — for
+   *  anchoring a line at a size derived from it (e.g. matching a sibling HUD element). */
+  baseSize?: number | ((vw: number, vh: number) => number)
   /** Fraction of the width the widest line may occupy. < 1 keeps end letters off the walls. */
   widthBudget?: number
   /** Fraction of the height all lines together may occupy. */
@@ -55,8 +58,15 @@ export interface LayoutOptions {
   glyphHeightRatio?: number
   /** Baseline y for each line. Default centres them; see `frame`. */
   lineYs?: (vh: number, count: number, sizes: number[]) => number[]
+  /** Centre x for each line. Default centres on the viewport; use for edge-anchored lines
+   *  (a corner HUD stage). Mirrors `lineYs`. */
+  lineXs?: (vw: number, count: number, sizes: number[]) => number[]
   /** Push the lines to the top and bottom edges instead of centring (default lineYs only). */
   frame?: boolean
+  /** Carried onto every LayoutResult: letters MISSING in a transition to this layout spawn at
+   *  their slots (an in-place materialize) rather than flying in from off-screen. The stage for
+   *  a seamless swap with a non-physics twin, before a later layout moves the letters for real. */
+  spawnAtSlot?: boolean
 }
 
 export interface LayoutStrategy {
@@ -101,7 +111,9 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
     maxScale = 1,
     glyphHeightRatio = 1.0,
     lineYs,
+    lineXs,
     frame = false,
+    spawnAtSlot = false,
   } = opts
 
   const resolve = (vw: number): Line[] => (typeof lines === 'function' ? lines(vw) : lines)
@@ -109,7 +121,8 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
   const strategy = (vw: number, vh: number): LayoutResult => {
     const ls = resolve(vw)
     const weights = ls.map((l) => l.weight ?? 1)
-    const baseSizes = weights.map((wt) => baseSize * wt)
+    const base = typeof baseSize === 'function' ? baseSize(vw, vh) : baseSize
+    const baseSizes = weights.map((wt) => base * wt)
 
     const widest = Math.max(1, ...ls.map((l, i) => measure(l.text, baseSizes[i])))
     const fitW = (vw * widthBudget) / widest
@@ -119,6 +132,7 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
 
     const sizes = baseSizes.map((sz) => sz * fit)
     const ys = lineYs ? lineYs(vh, ls.length, sizes) : defaultLineYs(vh, ls.length, sizes, frame)
+    const xs = lineXs ? lineXs(vw, ls.length, sizes) : null
 
     const slots: Slot[] = []
     ls.forEach((line, li) => {
@@ -126,7 +140,7 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
       // Pre-resolve advances so spaces cost the same here as they do when the letters are built.
       const widths = [...line.text].map((ch) => (ch === ' ' ? size * SPACE_FRAC : measure(ch, size)))
       const total = widths.reduce((s, v) => s + v, 0)
-      let cursor = vw / 2 - total / 2
+      let cursor = (xs ? xs[li] : vw / 2) - total / 2
       ;[...line.text].forEach((ch, ci) => {
         const wdt = widths[ci]
         const x = cursor + wdt / 2
@@ -136,7 +150,7 @@ export function createLineLayout(opts: LayoutOptions): LayoutStrategy {
       })
     })
 
-    return { slots, fit, sizes }
+    return { slots, fit, sizes, spawnAtSlot }
   }
 
   // Height is deliberately absent: only WIDTH can change the line set (via a `lines` function),

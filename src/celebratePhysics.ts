@@ -238,8 +238,10 @@ function colliderDescFor(rapier: typeof RAPIER, c: PxShape): RAPIER.ColliderDesc
 // are corner-free, so packed letters slide instead of wedging. Each piece is positioned +
 // rotated relative to the body centre. Empty hull (shouldn't happen — hullForGlyph
 // guarantees ≥1) falls back to a ball. Shared by world creation and runtime spawns.
-function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: LetterSpec, w: number, h: number): LetterBody {
-  const pose = spawnPose(w, h)
+function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: LetterSpec, w: number, h: number, atSlot = false): LetterBody {
+  // atSlot: materialize AT the target (upright, at rest) instead of raining in from an edge —
+  // the seamless-swap stage of a HUD hand-off (see LayoutOptions.spawnAtSlot).
+  const pose = atSlot ? { x: spec.slotX, y: spec.slotY, rot: 0 } : spawnPose(w, h)
   const body = world.createRigidBody(
     rapier.RigidBodyDesc.dynamic()
       .setTranslation(pose.x, pose.y)
@@ -436,10 +438,11 @@ export function cullDiscarded(state: CelebrateWorld): number[] {
   return removed
 }
 
-/** Spawn a new letter into the running world (flies in from an edge toward its slot).
+/** Spawn a new letter into the running world (flies in from an edge toward its slot — or, with
+ *  `atSlot`, materializes already home for a seamless hand-off from a non-physics twin).
  *  Returns its index — the render layer must push a matching renderLetter at the same index. */
-export function addLetter(state: CelebrateWorld, spec: LetterSpec): number {
-  const L = createLetterBody(state.rapier, state.world, spec, state.w, state.h)
+export function addLetter(state: CelebrateWorld, spec: LetterSpec, atSlot = false): number {
+  const L = createLetterBody(state.rapier, state.world, spec, state.w, state.h, atSlot)
   state.letters.push(L)
   return state.letters.length - 1
 }

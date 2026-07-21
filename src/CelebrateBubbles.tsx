@@ -668,11 +668,13 @@ export function CelebrateBubbles({
           scatterLetter(world, i, { solid: scatterStyle === 'bonk' })
           renderLetters[i].text.zIndex = 0
         }
-        // Missing: a fresh letter flies in from an edge (specFor + addLetter keep both arrays aligned).
+        // Missing: a fresh letter flies in from an edge — or, when the incoming layout asks for
+        // spawnAtSlot, materializes already home (the seamless-swap stage of a HUD hand-off).
+        // (specFor + addLetter keep both arrays aligned.)
         for (const { slot, survivor } of plan) {
           if (survivor >= 0) continue
           const { spec, render } = specFor(slot)
-          addLetter(world, spec)
+          addLetter(world, spec, next.spawnAtSlot === true)
           renderLetters.push(render)
         }
 
