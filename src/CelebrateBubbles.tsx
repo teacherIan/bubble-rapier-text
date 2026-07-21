@@ -381,7 +381,11 @@ export function CelebrateBubbles({
       // recompute the grab box and hull in place. Shared by the resize re-home and the transition
       // survivor path — the glyph itself is unchanged, so its Text is reused rather than rebuilt.
       const refitLetter = (r: RenderLetter, slot: Slot): void => {
+        const replaced = r.text.style
         r.text.style = styleFn(r.color, slot.size, r.seq)
+        // Free the replaced style's own resources (a styleFor pattern fill is per-letter);
+        // TextStyle.destroy() leaves shared underlying textures alone.
+        if (replaced && typeof (replaced as PIXI.TextStyle).destroy === 'function') (replaced as PIXI.TextStyle).destroy()
         r.hw = Math.max(8, r.text.width * 0.42)
         r.hh = Math.max(8, r.text.height * 0.4)
         r.colliders = scaleHull(hullFor(slot.ch, r.hw / slot.size, r.hh / slot.size), slot.size)
@@ -476,10 +480,23 @@ export function CelebrateBubbles({
         }
       }
 
-      const onPointerMove = (e: PointerEvent) => {
-        if (!world.drag) return
+      // Coalesce pointermoves to one per frame (ported from little_striders): high-rate
+      // touchscreens/mice fire far above 60Hz, and toWorld's getBoundingClientRect forces
+      // layout — process only the LATEST event, once per rAF.
+      let pendingMove: PointerEvent | null = null
+      let moveRaf = 0
+      const flushMove = () => {
+        moveRaf = 0
+        const e = pendingMove
+        pendingMove = null
+        if (!e || !world.drag) return
         const { x, y } = toWorld(e)
         moveDrag(world, x, y)
+      }
+      const onPointerMove = (e: PointerEvent) => {
+        if (!world.drag) return
+        pendingMove = e
+        if (!moveRaf) moveRaf = requestAnimationFrame(flushMove)
       }
 
       const endDrag = (e: PointerEvent) => {
@@ -491,14 +508,15 @@ export function CelebrateBubbles({
         }
       }
 
-      el.addEventListener('pointerdown', onPointerDown)
-      el.addEventListener('pointermove', onPointerMove)
-      el.addEventListener('pointerup', endDrag)
-      el.addEventListener('pointercancel', endDrag)
+      el.addEventListener('pointerdown', onPointerDown, { passive: true })
+      el.addEventListener('pointermove', onPointerMove, { passive: true })
+      el.addEventListener('pointerup', endDrag, { passive: true })
+      el.addEventListener('pointercancel', endDrag, { passive: true })
 
       // Press `d` to toggle dev outlines of the rigid bodies (one persistent Graphics,
       // redrawn only while on — no per-frame work when off).
       const debugGfx = new PIXI.Graphics()
+      debugGfx.zIndex = 5 // above the letters (zIndex 1) — hull outlines are useless behind them
       app.stage.addChild(debugGfx)
       let debug = false
       let debugDrawn = false
@@ -510,7 +528,7 @@ export function CelebrateBubbles({
         wake() // the overlay is drawn in the ticker — toggling it while idle must repaint
         if (import.meta.env?.DEV) (window as unknown as { __debug?: boolean }).__debug = debug
       }
-      window.addEventListener('keydown', onKey)
+      window.addEventListener('keydown', onKey, { passive: true })
 
       let acc = 0
       // `started` LATCHES: once the host lets the rain go, a later play=false must not re-freeze the
@@ -619,7 +637,7 @@ export function CelebrateBubbles({
         // parallel render array here can't shift an index out from under the loop.
         const culled = cullDiscarded(world)
         for (const i of culled) {
-          renderLetters[i].text.destroy()
+          renderLetters[i].text.destroy({ style: true })
           renderLetters.splice(i, 1)
         }
 
@@ -760,10 +778,15 @@ export function CelebrateBubbles({
         if (structural) {
           releaseDrag(world) // detach the joint BEFORE freeing the bodies it pins
           for (let i = renderLetters.length - 1; i >= 0; i--) {
-            renderLetters[i].text.destroy()
+            renderLetters[i].text.destroy({ style: true })
             removeLetter(world, i)
           }
           renderLetters.length = 0
+          // Re-deal from the top (ported from little_striders): the counter is monotonic so
+          // cull-splices can't drift colours, but a full rebuild re-creating the SAME word
+          // must reproduce the same deal — without the reset every rotation reshuffles the
+          // palette and pattern offsets, a visible flicker of identity.
+          colorSeq = 0
           for (const slot of next.slots) {
             const { spec, render } = specFor(slot)
             const i = addLetter(world, spec)
@@ -802,6 +825,7 @@ export function CelebrateBubbles({
       cleanup = () => {
         ro.disconnect()
         if (raf) cancelAnimationFrame(raf)
+        if (moveRaf) cancelAnimationFrame(moveRaf)
         el.removeEventListener('pointerdown', onPointerDown)
         el.removeEventListener('pointermove', onPointerMove)
         el.removeEventListener('pointerup', endDrag)
@@ -854,6 +878,7 @@ export function CelebrateBubbles({
     <div
       ref={containerRef}
       title={title}
+      aria-hidden="true"
       style={{
         position, // 'fixed' = whole viewport; 'absolute' = fill a positioned parent (overlay)
         inset: 0,

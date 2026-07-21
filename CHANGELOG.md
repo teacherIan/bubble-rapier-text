@@ -2,6 +2,36 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.8.0 — 2026-07-21
+
+Ports from little_striders — the app this library was extracted from had kept improving its
+vendored copy; 0.8.0 brings those improvements home ahead of its migration onto the package.
+
+### Added
+
+- **`setWallGroups(state, groups)`** — stamp collision groups on every cage collider, now and on
+  every rebuild (resize, post-transition). For a host body that must pass THROUGH the walls while
+  the letters stay caged (the strider cheetah). `null` restores the default.
+
+### Changed
+
+- **The idle gate gained a velocity term.** A letter sitting on its slot but still visibly moving
+  or spinning no longer counts as calm — `settledFrames` can't accrue mid-wobble, so a host ticker
+  never stops while pixels are changing.
+- **Structural rebuilds re-deal from the top.** `colorSeq` resets when a resize/rotation rebuilds
+  the same word, so the palette and pattern offsets reproduce instead of reshuffling. Transitions
+  still deal forward (and `slotColor` pins are unaffected).
+- **Pointermoves are rAF-coalesced** (one layout-forcing rect read per frame, latest event wins),
+  and all pointer/key listeners are `passive`.
+
+### Fixed
+
+- **Per-letter styles are freed with their letters.** Culls, rebuilds, and refits destroy the
+  replaced `TextStyle` (shared underlying textures untouched) — under a `styleFor` pattern factory
+  the old behavior leaked a style + fill pattern per cull/refit.
+- The `d` debug hull overlay draws ABOVE the letters (it rendered behind them).
+- The canvas container is `aria-hidden` — a decorative physics toy shouldn't reach screen readers.
+
 ## 0.7.3 — 2026-07-21
 
 ### Changed

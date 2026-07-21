@@ -122,6 +122,7 @@ export interface CelebrateWorld {
   floorBody: RAPIER.RigidBody | null // the bottom wall, removed on exit so letters fall off-screen
   walls: RAPIER.RigidBody[] // all four enclosure walls — removed wholesale on a word-to-word transition
   exiting: boolean // true once dropping off-screen (springs off, floor removed) — the /celebrate Start exit
+  wallGroups: number | null // collision groups stamped on every cage collider (see setWallGroups)
   dead: boolean // a wasm panic poisoned this world: stepping stops (render freezes; the page must live on)
   drag: DragState | null
 }
@@ -289,7 +290,7 @@ export async function createCelebrateWorld(
 
   const letters: LetterBody[] = specs.map((spec) => createLetterBody(rapier, world, spec, w, h))
 
-  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, settledFrames: 0, floorBody: null, walls: [], exiting: false, dead: false, drag: null }
+  return { rapier, world, letters, w, h, stuckDist, unghostDist, elapsedMs: 0, wallsAdded: false, settledFrames: 0, floorBody: null, walls: [], exiting: false, wallGroups: null, dead: false, drag: null }
 }
 
 // ── Transition primitives (re-layout to a new phrase) ───────────────────────────────────
@@ -321,6 +322,7 @@ export function resizeWorld(state: CelebrateWorld, w: number, h: number, stuckDi
     const cage = createWallCage(state.rapier, state.world, w, h, { thickness: WALL_T, sideExtent: 'full' })
     state.floorBody = cage.floor
     state.walls = cage.walls
+    applyWallGroups(state)
   }
 }
 
@@ -609,6 +611,28 @@ export function armEnclosureNow(state: CelebrateWorld): void {
   state.floorBody = cage.floor
   state.walls = cage.walls
   state.wallsAdded = true
+  applyWallGroups(state)
+}
+
+/**
+ * Set the collision groups stamped on every cage collider — now and on every rebuild (the cage is
+ * recreated on resize and after transitions). The use case is a host body that must pass THROUGH
+ * the walls while the letters stay caged (little_striders' cheetah): give walls a membership/filter
+ * that excludes the host body's group. `null` restores Rapier's default (collide with everything).
+ */
+export function setWallGroups(state: CelebrateWorld, groups: number | null): void {
+  state.wallGroups = groups
+  applyWallGroups(state)
+}
+
+function applyWallGroups(state: CelebrateWorld): void {
+  if (state.wallGroups === null) return
+  const stamp = (body: RAPIER.RigidBody | null) => {
+    if (!body) return
+    for (let i = 0; i < body.numColliders(); i++) body.collider(i).setCollisionGroups(state.wallGroups!)
+  }
+  stamp(state.floorBody)
+  for (const w of state.walls) stamp(w)
 }
 
 /**
@@ -717,6 +741,7 @@ function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): vo
     state.floorBody = cage.floor
     state.walls = cage.walls
     state.wallsAdded = true
+    applyWallGroups(state)
   }
 
   const draggedIndex = state.drag ? state.drag.index : -1
@@ -838,6 +863,10 @@ function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): vo
     const av = L.body.angvel()
     if (av > MAX_SPIN) L.body.setAngvel(MAX_SPIN, true)
     else if (av < -MAX_SPIN) L.body.setAngvel(-MAX_SPIN, true)
+    // Velocity term of the idle gate (ported from little_striders): a letter sitting ON its slot
+    // but still visibly moving or spinning is not calm — without this, settledFrames could accrue
+    // mid-wobble and the host's ticker stop while pixels were still changing.
+    if (sp2 > PARK_V2 || Math.abs(av) > 0.25) calm = false
   }
 
   // One calm frame closes the idle gate a notch; anything unsettled reopens it. The HOST decides

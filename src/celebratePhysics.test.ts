@@ -12,6 +12,7 @@ import {
   startLetterDrag,
   releaseDrag,
   addLetter,
+  setWallGroups,
   addObstacle,
   moveObstacle,
   removeObstacle,
@@ -443,5 +444,37 @@ describe('addLetter spawn placement', () => {
     expect(L.body.rotation()).toBeCloseTo(0)
     const v = L.body.linvel()
     expect(Math.hypot(v.x, v.y)).toBeLessThan(0.001)
+  })
+})
+
+describe('idle-gate velocity term (ported from little_striders)', () => {
+  it('a letter ON its slot but spinning fast is not calm', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 10; i++) stepCelebrate(w, DT)
+    expect(w.settledFrames).toBeGreaterThan(0) // baseline: at rest on slot = calm
+    w.letters[0].body.setAngvel(8, true) // in place, upright-ish, but visibly spinning
+    stepCelebrate(w, DT)
+    expect(w.settledFrames).toBe(0)
+  })
+})
+
+describe('setWallGroups', () => {
+  it('stamps the cage now and again after a resize rebuild', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const GROUPS = 0x00020001 // membership 1, filter 2 — arbitrary non-default
+    setWallGroups(w, GROUPS)
+    const groupsOf = (body: NonNullable<CelebrateWorld['floorBody']>) => {
+      const out: number[] = []
+      for (let i = 0; i < body.numColliders(); i++) out.push(body.collider(i).collisionGroups())
+      return out
+    }
+    expect(groupsOf(w.floorBody!)).toContain(GROUPS)
+    for (const wall of w.walls) expect(groupsOf(wall)).toContain(GROUPS)
+    // The cage is REBUILT on resize — the stamp must survive it.
+    resizeWorld(w, 900, 700, 60, 20)
+    expect(groupsOf(w.floorBody!)).toContain(GROUPS)
+    for (const wall of w.walls) expect(groupsOf(wall)).toContain(GROUPS)
   })
 })
