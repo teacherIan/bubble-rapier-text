@@ -159,6 +159,23 @@ See the full public surface in [`src/index.ts`](src/index.ts).
 
 ---
 
+### Sharing one Rapier init with a host app
+
+If your app already initializes Rapier for its own physics (or you'd rather ship a raw `.wasm`
+than the compat build's inlined base64), point the library at YOUR loader **at module scope**,
+before anything mounts:
+
+```ts
+import { setRapierLoader } from 'bubble-rapier-text'
+import { ensureRapierInitialized } from '@/lib/physics/rapierInit' // your app's once-per-page init
+
+setRapierLoader(ensureRapierInitialized)
+```
+
+`setRapierLoader` throws if the library's own init already started — call it in the module that
+lazy-imports the component, not in an effect. One Rapier instance means one WASM decode and no
+cross-instance `instanceof` misses between your bodies and the library's.
+
 ## Authoring collision hulls
 
 Each glyph's collider is a small compound of **curved** primitives — `ball`, `cap` (capsule),

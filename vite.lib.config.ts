@@ -3,10 +3,9 @@ import react from '@vitejs/plugin-react'
 import dts from 'vite-plugin-dts'
 import { fileURLToPath } from 'node:url'
 
-// Optional library build: `npm run build:lib` → dist/ (ESM bundle + .d.ts), with React,
-// PIXI, and Rapier left external (consumers provide them). The package's default `exports`
-// point at the TypeScript source (src/index.ts), so a bundler-based consumer needs no build
-// at all — this config exists for publishing a precompiled artifact when that's preferred.
+// The library build: `npm run build:lib` → dist/ (ESM bundle + .d.ts), with React, PIXI,
+// and Rapier left external (consumers provide them). The package's `exports` point at this
+// dist output; `prepare`/`prepack` run it, so git installs and tarballs ship compiled.
 export default defineConfig({
   plugins: [
     react(),
