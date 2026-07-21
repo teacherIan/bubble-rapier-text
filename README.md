@@ -94,6 +94,7 @@ different React `key` to change those.
 | `layout`      | `LayoutStrategy`          | derived from `phrase` | **Live.** Full control of slot geometry; overrides `phrase`. Changing it morphs, same as `phrase`. See `createLineLayout`. |
 | `idleFrames`  | `number \| false`         | `110`     | Stop the PIXI ticker after this many fully-calm frames; `false` never stops. Wakes on pointer, resize, and exit. |
 | `getObstacles` | `() => ObstaclePose[]`   | —         | Kinematic mirrors of bodies simulated in ANOTHER world — letters bounce off them (see [Bouncing letters off another simulation](#bouncing-letters-off-another-simulation)). Polled per frame; disables the idle gate while set. |
+| `styleFor`    | `(color, size, seq) => PIXI.TextStyle` | the classic solid fill | Custom letter text styles — patterned fills, themed strokes. Gets the letter's dealt colour, slot size, and deal order (`seq`, for per-letter pattern offsets). KEEP `metricStyle`'s metrics or layout and colliders will disagree with what's drawn. Mount-time. |
 | `reducedMotion` | `boolean`               | the media query | Force the no-rain path: letters start on their slots and the cage goes up immediately. |
 | `maxResolution` | `number \| (w) => number` | `2` ≤640px, else `2.5` | Cap on `devicePixelRatio`. A phone at DPR 3 renders 9× the pixels for no visible gain. |
 | `background`  | `string`                  | a soft gradient | CSS background behind the canvas. `transparent` wins over it. |
@@ -199,6 +200,27 @@ the wedged-letter untangle stands down (a pressed letter pushes instead of ghost
 the idle gate is disabled whenever the prop is set, because a stopped ticker couldn't see a
 mirror coming. Driving the sim yourself instead? The same primitives are exported:
 `addObstacle` / `moveObstacle` / `removeObstacle`, plus `busy` on `stepCelebrate`.
+
+### Layout control: `createLineLayout`
+
+`createLineLayout({ lines, measure, ... })` returns a `LayoutStrategy` — a function from viewport
+to per-character slots, plus a structural `signature` the component uses to tell a resize re-home
+from a real morph. Beyond the basics (`baseSize`, `widthBudget`, `heightBudget`, `maxScale`,
+`lineYs`, `frame`), three options exist for **HUD hand-offs** (added in 0.7.x):
+
+| Option        | What it does |
+| ------------- | ------------ |
+| `lineXs`      | Per-line centre **x** (mirrors `lineYs`; default centres on the viewport). Edge-anchor a line over a HUD element. |
+| `baseSize`    | Also accepts `(vw, vh) => number`, so a line's font size can match a sibling HUD element exactly. |
+| `spawnAtSlot` | Letters MISSING in a transition to this layout **materialize at their slots**, upright and at rest, instead of flying in from an edge. |
+| `slotColor`   | Pin per-slot colours (`(lineIndex, charIndex, ch) => number \| undefined`). The dealt-palette counter is monotonic across rebuilds, so colour continuity with a HUD twin needs pins. Pins apply at letter creation; survivors keep the colour they wear. |
+
+The pattern: render your HUD element (a canvas odometer, a DOM counter) normally; at the hand-off
+moment, transition to a `spawnAtSlot` layout whose slots sit exactly over it — same size (viewport
+`baseSize`), same advances (your `measure`), same colours (`slotColor`) — and hide the HUD element
+the same frame. The letters are now real physics bodies wearing identical pixels. A beat later,
+transition to your real layout: the same bodies **retarget and travel there on the sim**. No fades,
+no seam.
 
 ## Authoring collision hulls
 

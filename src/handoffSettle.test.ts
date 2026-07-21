@@ -27,7 +27,7 @@ function spec(ch: string, x: number, y: number, size: number): LetterSpec {
 
 beforeAll(async () => { await ensureRapierInitialized() })
 
-it('corner spawn -> thanks morph -> long settle does not panic', async () => {
+it('HUD hand-off lifecycle (corner spawn -> retarget morph -> long settle) stays wasm-stable', async () => {
   const w = await createCelebrateWorld([], W, H, 60, 20)
   // simulate the race: empty world, walls up (post entrance)
   armEnclosureNow(w)
