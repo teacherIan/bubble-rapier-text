@@ -523,3 +523,30 @@ describe('resizeLetterColliders', () => {
     expect(w.letters[0].body.numColliders()).toBe(1)
   })
 })
+
+describe('exit idle gate', () => {
+  it('lets settledFrames accumulate once the exit letters clear the bottom', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    exitCelebrate(w)
+    // Fall off the bottom (the exit opens the floor and lets gravity take them).
+    for (let i = 0; i < 400; i++) stepCelebrate(w, DT)
+    expect(w.letters[0].body.translation().y).toBeGreaterThan(w.h) // gone off-screen
+    // Old behavior pinned settledFrames=0 forever while exiting -> the host
+    // ticker could never idle. Now it accumulates once the letters are gone.
+    expect(w.settledFrames).toBeGreaterThan(0)
+  })
+})
+
+describe('re-caging after removeWalls', () => {
+  it('armEnclosureNow rebuilds the cage that removeWalls tore down', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    expect(w.walls.length).toBeGreaterThan(0)
+    removeWalls(w) // a morph opens every edge; wallsAdded stays true, walls emptied
+    expect(w.walls.length).toBe(0)
+    armEnclosureNow(w) // must REBUILD, not no-op on the stale wallsAdded flag
+    expect(w.walls.length).toBeGreaterThan(0)
+    expect(w.floorBody).not.toBeNull()
+  })
+})

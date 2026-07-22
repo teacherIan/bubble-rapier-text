@@ -559,8 +559,12 @@ export function CelebrateBubbles({
       // Pull the host's foreign-body poses and re-state them as kinematic mirrors. Returns whether
       // any mirror MOVED (per OBSTACLE_WAKE_PX hysteresis) — that is this frame's `busy`.
       const syncObstacles = (): boolean => {
-        const poses = getObstaclesRef.current?.()
-        if (!poses) return false
+        const getter = getObstaclesRef.current
+        if (!getter) return false // no obstacle feature at all — nothing to reconcile
+        // A PRESENT getter that returns undefined ("paused" / "no data yet") means
+        // zero obstacles NOW — fall through to the cleanup below so mirrors added
+        // while poses were present don't orphan in the world forever.
+        const poses = getter() ?? []
         let moved = false
         obstacleIds.clear()
         for (const p of poses) {

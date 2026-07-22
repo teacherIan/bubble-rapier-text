@@ -21,6 +21,7 @@ const RESTITUTION = 0.15 // letter-vs-letter bounce — kept low so contacts dis
 // that comes from gravity + LINEAR_DAMPING, not restitution).
 const SOLVER_ITERATIONS = 8 // > the default 4: fewer residual penetrations in the packed pile = fewer wedges at the source
 const WALL_T = 240
+const EXIT_CLEAR_PX = 200 // a letter this far below the bottom has fully left the screen; the exit is done
 // Drag is a Rapier REVOLUTE "mouse joint": a kinematic anchor body sits at the cursor and the
 // grabbed point is pinned to it (see attachMouseJoint), so the letter hinges/swings about wherever
 // you grabbed it (grab the top of a tall glyph and it dangles + swings under gravity, like lifting a
@@ -309,6 +310,7 @@ export async function createCelebrateWorld(
  *  size. The render layer is responsible for recomputing slot targets (retargetLetter) for the new
  *  dimensions and resizing its own canvas. */
 export function resizeWorld(state: CelebrateWorld, w: number, h: number, stuckDist: number, unghostDist: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   state.w = w
   state.h = h
   state.stuckDist = stuckDist
@@ -336,6 +338,7 @@ export function removeWalls(state: CelebrateWorld): void {
 
 /** Point an existing letter at a new slot; the slot spring carries it there. */
 export function retargetLetter(state: CelebrateWorld, index: number, x: number, y: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (!L) return
   L.tx = x
@@ -397,6 +400,7 @@ export function resizeLetterColliders(state: CelebrateWorld, index: number, coll
  * through everything from frame one and just sails off without disturbing the forming word.
  */
 export function scatterLetter(state: CelebrateWorld, index: number, opts: { solid?: boolean } = {}): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (!L) return
   // Already flung: leave it alone. Re-flinging an airborne letter resets its cull lease
@@ -430,6 +434,7 @@ const DISCARD_CULL_FRAMES = 420 // ~7s discarded, wherever it is — the backsto
  * LATER letter has its index shifted down by the splice.
  */
 export function removeLetter(state: CelebrateWorld, index: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (!L) return
   if (state.drag) {
@@ -454,6 +459,7 @@ export function removeLetter(state: CelebrateWorld, index: number): void {
  * could never stop.
  */
 export function cullDiscarded(state: CelebrateWorld): number[] {
+  if (state.dead) return []  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const removed: number[] = []
   for (let i = state.letters.length - 1; i >= 0; i--) {
     const L = state.letters[i]
@@ -475,6 +481,7 @@ export function cullDiscarded(state: CelebrateWorld): number[] {
  *  `atSlot`, materializes already home for a seamless hand-off from a non-physics twin).
  *  Returns its index — the render layer must push a matching renderLetter at the same index. */
 export function addLetter(state: CelebrateWorld, spec: LetterSpec, atSlot = false): number {
+  if (state.dead) return -1  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = createLetterBody(state.rapier, state.world, spec, state.w, state.h, atSlot)
   state.letters.push(L)
   return state.letters.length - 1
@@ -482,6 +489,7 @@ export function addLetter(state: CelebrateWorld, spec: LetterSpec, atSlot = fals
 
 /** Make a dragged letter solid again (called when a ghosting letter is grabbed). */
 export function solidifyLetter(state: CelebrateWorld, index: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (L && L.ghost) setLetterSolid(L, true)
 }
@@ -507,6 +515,7 @@ function detachMouseJoint(state: CelebrateWorld, m: MouseJoint): void {
 
 /** Grab a letter at a point in its local frame; it then hinges/swings from there as you drag. */
 export function startLetterDrag(state: CelebrateWorld, index: number, grabLocalX: number, grabLocalY: number, cursorX: number, cursorY: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (!L) return
   if (state.drag) detachMouseJoint(state, state.drag) // clear any prior drag
@@ -515,6 +524,7 @@ export function startLetterDrag(state: CelebrateWorld, index: number, grabLocalX
 
 /** Update the cursor anchor (on pointer move). */
 export function moveDrag(state: CelebrateWorld, cursorX: number, cursorY: number): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   if (state.drag) {
     state.drag.cursorX = cursorX
     state.drag.cursorY = cursorY
@@ -523,6 +533,7 @@ export function moveDrag(state: CelebrateWorld, cursorX: number, cursorY: number
 
 /** Release the drag — the letter keeps its fling momentum, then the slot spring carries it home. */
 export function releaseDrag(state: CelebrateWorld): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   if (state.drag) {
     detachMouseJoint(state, state.drag)
     state.drag = null
@@ -636,7 +647,11 @@ export function removeObstacle(state: CelebrateWorld, o: Obstacle): void {
  * removed cage mid-transition.
  */
 export function armEnclosureNow(state: CelebrateWorld): void {
-  if (state.wallsAdded) return
+  if (state.dead) return
+  // Guard on whether the cage is actually PRESENT, not the `wallsAdded` flag —
+  // `removeWalls` (used during a morph) leaves the flag true but the walls
+  // empty, and a consumer must be able to bring the cage back afterward.
+  if (state.walls.length > 0) return
   const cage = addEnclosure(state.rapier, state.world, state.w, state.h)
   state.floorBody = cage.floor
   state.walls = cage.walls
@@ -763,9 +778,14 @@ function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): vo
   // Exiting: no springs/untangle/drag — just step, so gravity pulls the letters down through
   // the (now-removed) floor and off the bottom.
   if (state.exiting) {
-    state.settledFrames = 0 // letters are falling off-screen — emphatically not idle
     world.timestep = dt
     world.step()
+    // Once every letter has cleared the bottom the exit is DONE. Let
+    // settledFrames accumulate so a still-mounted host's idle gate can fire and
+    // stop the ticker — otherwise `exiting` stays true forever and the loop
+    // runs at 60fps for the life of the page after a finish/hide.
+    const gone = letters.length === 0 || letters.every((L) => L.body.translation().y > state.h + EXIT_CLEAR_PX)
+    state.settledFrames = gone ? state.settledFrames + 1 : 0
     return
   }
 

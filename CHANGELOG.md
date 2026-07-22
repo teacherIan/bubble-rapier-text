@@ -2,6 +2,30 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.8.4 — 2026-07-22
+
+Minor stability polish (audit follow-ups).
+
+### Fixed
+- **Exit never let the ticker idle.** `exitCelebrate` set `exiting = true`
+  permanently; while exiting, the step pinned `settledFrames = 0`, so a host
+  that kept the component mounted after a finish/hide ran the loop at 60fps
+  forever. Once every letter has fallen clear of the bottom, `settledFrames`
+  now accumulates so the idle gate can fire.
+- **`world.dead` was only honored by `stepCelebrate`.** After a caught WASM
+  panic, the other public mutators (`retargetLetter`, `scatterLetter`,
+  `cullDiscarded`, the drag trio, `resizeWorld`, `addLetter`, `removeLetter`,
+  `solidifyLetter`) still touched the poisoned instance. They now no-op when
+  `dead`. (The React component was already safe — its ticker checks `dead`.)
+- **No way to re-cage after `removeWalls`.** `armEnclosureNow` no-op'd on the
+  stale `wallsAdded` flag; it now rebuilds whenever the walls are actually
+  absent, so a framework-free consumer can bring the enclosure back after a
+  morph.
+- **`getObstacles()` returning `undefined` orphaned mirrors.** A present getter
+  that returned `undefined` (paused / no data) skipped reconciliation, leaking
+  every kinematic mirror body. Undefined is now treated as "none now" and the
+  mirrors are cleaned up.
+
 ## 0.8.3 — 2026-07-22
 
 Stability fixes from a multi-agent audit.
