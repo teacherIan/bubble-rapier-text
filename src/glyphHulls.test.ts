@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EDITABLE_GLYPHS, GLYPH_HULLS, GLYPH_LIST, hullForGlyph, makeHullForGlyph, scaleHull, type HullShape } from './glyphHulls'
+import { EDITABLE_GLYPHS, GLYPH_GROUPS, GLYPH_HULLS, GLYPH_LIST, hullForGlyph, makeHullForGlyph, scaleHull, type HullShape } from './glyphHulls'
 
 // These pin the two invariants the whole collision system rests on:
 //  1. scaleHull is a pure units→px multiply that leaves ANGLES alone. Scaling an angle is the
@@ -93,11 +93,12 @@ describe('hullForGlyph with an injected map', () => {
 
 describe('the merged hull set', () => {
   // `o` and `a` exist in both this package's traces and the consumer set merged alongside them,
-  // with independently traced (~5% different) values. These pin THIS package's values so a future
-  // `{...GLYPH_HULLS, ...theirs}` spread can't silently clobber what the demo phrase was tuned to.
+  // with independently traced (~5% different) values. These pin THIS package's demo-tuned values so
+  // a future `{...GLYPH_HULLS, ...theirs}` spread can't silently clobber them. Update these when the
+  // demo-phrase hulls are legitimately retuned in the editor — never to whatever a spread produced.
   it('keeps the demo-tuned o and a, not the re-traced ones', () => {
-    expect(GLYPH_HULLS['o']).toEqual([{ t: 'ball', x: -0.044, y: 0.107, r: 0.249 }])
-    expect(GLYPH_HULLS['a']).toEqual([{ t: 'ball', x: -0.053, y: 0.132, r: 0.269 }])
+    expect(GLYPH_HULLS['o']).toEqual([{ t: 'ball', x: -0.024, y: 0.127, r: 0.249 }])
+    expect(GLYPH_HULLS['a']).toEqual([{ t: 'ball', x: -0.036, y: 0.133, r: 0.269 }])
   })
 
   it('retains every glyph of the demo phrase', () => {
@@ -131,6 +132,44 @@ describe('alphabet coverage', () => {
         expect(Math.abs(s.y), `${ch} y offset`).toBeLessThan(0.5)
       }
     }
+  })
+})
+
+describe('printable-ASCII coverage', () => {
+  // The map is a standard library now: every printable-ASCII glyph gets a real hull, not the
+  // generic centred ball the fallback hands out. A gap here means a word with that character
+  // silently collides as a blob in the wrong place.
+  const DIGITS = '0123456789'.split('')
+  const SYMBOLS = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.split('')
+
+  it('has an authored hull for every digit 0–9', () => {
+    const missing = DIGITS.filter((ch) => !GLYPH_HULLS[ch]?.length)
+    expect(missing, `missing digits: ${missing.join(' ')}`).toEqual([])
+  })
+
+  it('has an authored hull for every ASCII punctuation mark', () => {
+    const missing = SYMBOLS.filter((ch) => !GLYPH_HULLS[ch]?.length)
+    expect(missing, `missing symbols: ${missing.join(' ')}`).toEqual([])
+  })
+
+  it('sizes every digit and symbol plausibly — no hull collapsed or ballooned', () => {
+    for (const ch of [...DIGITS, ...SYMBOLS]) {
+      for (const s of GLYPH_HULLS[ch]) {
+        const extent = s.t === 'ball' ? s.r : s.t === 'oval' ? Math.max(s.rx, s.ry) : s.t === 'cap' ? s.r + s.h : Math.max(s.hx, s.hy)
+        expect(extent, `${ch} extent ${extent}`).toBeGreaterThan(0.03)
+        expect(extent, `${ch} extent ${extent}`).toBeLessThan(0.75)
+        expect(Math.abs(s.x), `${ch} x offset`).toBeLessThan(0.5)
+        expect(Math.abs(s.y), `${ch} y offset`).toBeLessThan(0.5)
+      }
+    }
+  })
+
+  it('GLYPH_GROUPS band exactly the authored printable-ASCII set — no orphan tab, no gap', () => {
+    const grouped = GLYPH_GROUPS.flatMap((g) => [...g.glyphs])
+    expect(new Set(grouped).size, 'a glyph is listed in two bands').toBe(grouped.length)
+    for (const ch of grouped) expect(GLYPH_HULLS[ch]?.length, `banded glyph ${ch} has no hull`).toBeGreaterThan(0)
+    const authoredAscii = Object.keys(GLYPH_HULLS).filter((ch) => ch.charCodeAt(0) >= 0x20 && ch.charCodeAt(0) < 0x7f)
+    for (const ch of authoredAscii) expect(grouped, `authored ${ch} is in no GLYPH_GROUP`).toContain(ch)
   })
 })
 

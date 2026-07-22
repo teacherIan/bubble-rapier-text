@@ -202,10 +202,10 @@ export function strokeHullPx(
 export const GLYPH_LIST = ['C', 'E', 'L', 'B', 'R', 'A', 'T', 'y', 'o', 'u', 'r', 'h', 'a', 'd', 'w', 'k'] as const
 
 /**
- * Every glyph the dev tools can reach, in tab order: the demo phrase first (GLYPH_LIST), then any
- * other authored hull. Without the second half, glyphs outside the demo phrase would be
- * un-browsable and therefore unverifiable — you could author them but never look at them again.
- * Declared after GLYPH_HULLS below, so it is defined at the bottom of this file.
+ * GLYPH_GROUPS + EDITABLE_GLYPHS (both declared after GLYPH_HULLS below) organize the whole
+ * printable-ASCII set the map now covers into labelled bands — Uppercase, Lowercase, Digits,
+ * Punctuation — for the editor's palette and the lab's contact sheet. Without a browsable entry a
+ * glyph is authorable but never verifiable again, so the tools default to the full grouped list.
  */
 
 // ── Collision hulls, placed in /glyph-editor against the real Cherry Bomb One face ──
@@ -213,49 +213,44 @@ export const GLYPH_LIST = ['C', 'E', 'L', 'B', 'R', 'A', 'T', 'y', 'o', 'u', 'r'
 // capsule, rrect (roundCuboid), oval (roundConvexHull) — so packed letters slide and
 // never wedge on a corner. To retune: drag in /glyph-editor, then re-bake the export here.
 export const GLYPH_HULLS: Record<string, HullShape[]> = {
-  C: [{ t: 'oval', x: -0.038, y: -0.008, rx: 0.324, ry: 0.377, a: 0 }],
-  E: [{ t: 'cap', x: -0.019, y: -0.005, r: 0.272, h: 0.101, a: 0.001 }],
+  C: [{ t: 'oval', x: -0.009, y: 0.007, rx: 0.324, ry: 0.377, a: 0 }],
+  E: [{ t: 'cap', x: 0.007, y: 0.011, r: 0.272, h: 0.101, a: 0.001 }],
   L: [
-    { t: 'cap', x: -0.178, y: -0.034, r: 0.15, h: 0.195, a: 0.066 },
-    { t: 'cap', x: -0.049, y: 0.217, r: 0.13, h: 0.18, a: 1.571 },
+    { t: 'cap', x: -0.169, y: -0.002, r: 0.15, h: 0.195, a: 0.066 },
+    { t: 'cap', x: -0.035, y: 0.231, r: 0.13, h: 0.18, a: 1.571 },
   ],
-  B: [{ t: 'cap', x: -0.034, y: -0.015, r: 0.313, h: 0.06, a: -0.025 }],
-  R: [{ t: 'oval', x: -0.04, y: 0.009, rx: 0.3, ry: 0.386, a: 0 }],
-  A: [{ t: 'oval', x: -0.042, y: 0.014, rx: 0.315, ry: 0.393, a: 0 }],
+  B: [{ t: 'cap', x: -0.014, y: 0.004, r: 0.313, h: 0.06, a: -0.025 }],
+  R: [{ t: 'oval', x: -0.025, y: 0.024, rx: 0.3, ry: 0.386, a: 0 }],
+  A: [{ t: 'oval', x: -0.025, y: 0.024, rx: 0.315, ry: 0.393, a: 0 }],
   T: [
-    { t: 'cap', x: -0.043, y: -0.222, r: 0.145, h: 0.219, a: 1.576 },
-    { t: 'cap', x: -0.041, y: 0.105, r: 0.141, h: 0.115, a: -0.017 },
+    { t: 'cap', x: -0.024, y: -0.202, r: 0.145, h: 0.219, a: 1.576 },
+    { t: 'cap', x: -0.027, y: 0.113, r: 0.141, h: 0.115, a: -0.017 },
   ],
-  // "!" — a slim vertical stem + the dot. Authored numerically against the face's
-  // proportions (a thin glyph; the ball fallback collided ~3× too wide). Retune in
-  // /glyph-editor if it ever reads off.
-  '!': [
-    { t: 'cap', x: 0, y: -0.1, r: 0.12, h: 0.17, a: 0 },
-    { t: 'ball', x: 0, y: 0.3, r: 0.12 },
-  ],
-  y: [{ t: 'cap', x: -0.058, y: 0.192, r: 0.26, h: 0.086, a: 0.181 }],
-  o: [{ t: 'ball', x: -0.044, y: 0.107, r: 0.249 }],
-  u: [{ t: 'ball', x: -0.038, y: 0.088, r: 0.26 }],
+  y: [{ t: 'cap', x: -0.037, y: 0.191, r: 0.26, h: 0.086, a: 0.181 }],
+  o: [{ t: 'ball', x: -0.024, y: 0.127, r: 0.249 }],
+  u: [{ t: 'ball', x: -0.024, y: 0.112, r: 0.26 }],
   r: [
-    { t: 'cap', x: -0.166, y: 0.1, r: 0.11, h: 0.135, a: -0.049 },
-    { t: 'ball', x: 0.052, y: -0.018, r: 0.132 },
+    { t: 'cap', x: -0.148, y: 0.122, r: 0.11, h: 0.135, a: -0.054 },
+    { t: 'ball', x: 0.056, y: 0.01, r: 0.132 },
   ],
   h: [
-    { t: 'cap', x: -0.2, y: 0, r: 0.12, h: 0.29, a: 0 },
-    { t: 'cap', x: 0.109, y: 0.144, r: 0.11, h: 0.15, a: 0 },
-    { t: 'cap', x: -0.005, y: -0.038, r: 0.1, h: 0.112, a: 1.573 },
+    { t: 'cap', x: -0.181, y: 0.005, r: 0.12, h: 0.29, a: 0 },
+    { t: 'cap', x: 0.064, y: 0.13, r: 0.154, h: 0.13, a: -0.014 },
   ],
-  a: [{ t: 'ball', x: -0.053, y: 0.132, r: 0.269 }],
+  a: [{ t: 'ball', x: -0.036, y: 0.133, r: 0.269 }],
   d: [
-    { t: 'ball', x: -0.07, y: 0.094, r: 0.24 },
-    { t: 'cap', x: 0.083, y: -0.025, r: 0.118, h: 0.23, a: 0 },
+    { t: 'ball', x: -0.046, y: 0.118, r: 0.24 },
+    { t: 'cap', x: 0.104, y: -0.001, r: 0.118, h: 0.23, a: 0 },
   ],
-  w: [{ t: 'cap', x: -0.039, y: 0.103, r: 0.262, h: 0.106, a: 1.571 }],
+  w: [{ t: 'cap', x: -0.032, y: 0.1, r: 0.262, h: 0.106, a: 1.571 }],
   k: [
-    { t: 'cap', x: -0.179, y: 0.012, r: 0.12, h: 0.28, a: 0 },
-    { t: 'cap', x: 0.058, y: -0.012, r: 0.1, h: 0.06, a: -2.165 },
-    { t: 'cap', x: 0.073, y: 0.187, r: 0.1, h: 0.068, a: -0.541 },
+    { t: 'cap', x: -0.162, y: 0.011, r: 0.12, h: 0.28, a: 0 },
+    { t: 'cap', x: 0.085, y: 0.003, r: 0.1, h: 0.06, a: -2.165 },
+    { t: 'cap', x: 0.095, y: 0.215, r: 0.1, h: 0.068, a: -0.541 },
   ],
+  // "!" — stem + dot swallowed into one slim vertical capsule. A thin glyph; the ball fallback
+  // collided ~3× too wide. Retune in /glyph-editor if it ever reads off.
+  '!': [{ t: 'cap', x: -0.019, y: -0.007, r: 0.12, h: 0.264, a: 0.008 }],
 
   // ── Traced for a second wordmark ("Little Striders Running Club") ─────────────────────────
   // Merged in key-wise, never as a wholesale replacement. Note `o` and `a` are deliberately NOT
@@ -263,30 +258,30 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
   // ~5% (that wordmark's own lines contain no `o`/`a`, so they were re-traced from scratch for
   // its transition words). Neither is "more correct" — a blind spread would silently clobber
   // whichever was tuned against the demo phrase above.
-  i: [{ t: 'oval', x: -0.043, y: -0.023, rx: 0.379, ry: 0.12, a: 1.574 }],
+  i: [{ t: 'oval', x: -0.018, y: -0.01, rx: 0.379, ry: 0.12, a: 1.574 }],
   t: [
-    { t: 'cap', x: -0.073, y: -0.016, r: 0.108, h: 0.254, a: -0.009 },
-    { t: 'cap', x: -0.06, y: -0.097, r: 0.1, h: 0.175, a: 1.569 },
-    { t: 'cap', x: -0.005, y: 0.263, r: 0.1, h: 0.083, a: 1.683 },
+    { t: 'cap', x: -0.061, y: 0, r: 0.108, h: 0.254, a: -0.009 },
+    { t: 'cap', x: -0.038, y: -0.077, r: 0.1, h: 0.175, a: 1.569 },
+    { t: 'cap', x: 0.012, y: 0.266, r: 0.1, h: 0.083, a: 1.683 },
   ],
-  l: [{ t: 'oval', x: -0.045, y: -0.005, rx: 0.38, ry: 0.12, a: 1.588 }],
-  e: [{ t: 'ball', x: -0.035, y: 0.112, r: 0.253 }],
-  S: [{ t: 'oval', x: -0.039, y: -0.006, rx: 0.367, ry: 0.286, a: 1.555 }],
-  s: [{ t: 'ball', x: -0.045, y: 0.102, r: 0.231 }],
+  l: [{ t: 'oval', x: -0.023, y: 0.004, rx: 0.38, ry: 0.12, a: 1.588 }],
+  e: [{ t: 'ball', x: -0.023, y: 0.116, r: 0.253 }],
+  S: [{ t: 'oval', x: -0.007, y: 0.005, rx: 0.367, ry: 0.286, a: 1.555 }],
+  s: [{ t: 'ball', x: -0.022, y: 0.114, r: 0.231 }],
   n: [{ t: 'ball', x: -0.053, y: 0.11, r: 0.266 }],
-  g: [{ t: 'ball', x: -0.029, y: 0.149, r: 0.323 }],
+  g: [{ t: 'ball', x: -0.021, y: 0.19, r: 0.323 }],
   b: [
     { t: 'ball', x: -0.037, y: 0.098, r: 0.262 },
     { t: 'cap', x: -0.184, y: -0.113, r: 0.1, h: 0.166, a: 0.252 },
   ],
   M: [{ t: 'ball', x: -0.039, y: -0.002, r: 0.394 }],
-  c: [{ t: 'ball', x: -0.025, y: 0.102, r: 0.246 }],
+  c: [{ t: 'ball', x: 0, y: 0.121, r: 0.246 }],
   J: [
     { t: 'cap', x: -0.006, y: -0.255, r: 0.1, h: 0.192, a: 1.568 },
-    { t: 'cap', x: 0.007, y: 0.039, r: 0.136, h: 0.12, a: 0 },
+    { t: 'cap', x: 0.007, y: 0.059, r: 0.136, h: 0.12, a: 0 },
     { t: 'cap', x: -0.184, y: 0.201, r: 0.1, h: 0.125, a: -0.811 },
   ],
-  D: [{ t: 'ball', x: -0.062, y: -0.016, r: 0.344 }],
+  D: [{ t: 'ball', x: -0.057, y: 0.007, r: 0.344 }],
 
   // ── The rest of A–Z, so the engine can set ANY word ───────────────────────────────────────
   // DERIVED, not hand-traced: each glyph's ink bounding box is read from the Cherry Bomb One
@@ -302,11 +297,11 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
   //
   // Refine any of them by eye in the editor (they are ordinary data) and re-bake. Verify the
   // whole set at a glance with the lab's ?all=1&hull=1 contact sheet.
-  F: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.288, ry: 0.378, a: 0 }],
-  G: [{ t: 'ball', x: -0.041, y: -0.007, r: 0.355 }],
-  H: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.372 }],
-  I: [{ t: 'oval', x: -0.041, y: -0.008, rx: 0.229, ry: 0.377, a: 0 }],
-  K: [{ t: 'oval', x: -0.041, y: -0.006, rx: 0.298, ry: 0.378, a: 0 }],
+  F: [{ t: 'oval', x: -0.021, y: -0.004, rx: 0.288, ry: 0.378, a: 0 }],
+  G: [{ t: 'ball', x: 0.008, y: -0.003, r: 0.355 }],
+  H: [{ t: 'ball', x: -0.015, y: -0.003, r: 0.372 }],
+  I: [{ t: 'oval', x: -0.017, y: 0.004, rx: 0.229, ry: 0.377, a: 0 }],
+  K: [{ t: 'oval', x: -0.026, y: -0.006, rx: 0.298, ry: 0.378, a: 0 }],
   N: [{ t: 'ball', x: -0.041, y: -0.006, r: 0.365 }],
   O: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.37 }],
   P: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.35 }],
@@ -317,14 +312,67 @@ export const GLYPH_HULLS: Record<string, HullShape[]> = {
   X: [{ t: 'ball', x: -0.04, y: -0.006, r: 0.373 }],
   Y: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.366 }],
   Z: [{ t: 'ball', x: -0.041, y: -0.005, r: 0.348 }],
-  f: [{ t: 'oval', x: -0.038, y: -0.007, rx: 0.254, ry: 0.377, a: 0 }],
-  j: [{ t: 'oval', x: -0.066, y: 0.066, rx: 0.171, ry: 0.487, a: 0 }],
+  f: [{ t: 'oval', x: 0.001, y: -0.002, rx: 0.254, ry: 0.377, a: 0 }],
+  j: [{ t: 'oval', x: -0.037, y: 0.076, rx: 0.171, ry: 0.487, a: 0 }],
   m: [{ t: 'oval', x: -0.041, y: 0.099, rx: 0.339, ry: 0.264, a: 0 }],
   p: [{ t: 'ball', x: -0.041, y: 0.179, r: 0.312 }],
   q: [{ t: 'ball', x: -0.041, y: 0.179, r: 0.312 }],
   v: [{ t: 'ball', x: -0.04, y: 0.108, r: 0.263 }],
   x: [{ t: 'ball', x: -0.041, y: 0.11, r: 0.246 }],
-  z: [{ t: 'ball', x: -0.041, y: 0.108, r: 0.241 }],
+  z: [{ t: 'ball', x: -0.022, y: 0.128, r: 0.271 }],
+
+  // ── Digits 0–9 ────────────────────────────────────────────────────────────────────────────
+  // DERIVED like the A–Z block above (same fitted ink-box → frame transform), so the engine can
+  // set any number. Cherry Bomb One's figures are cap-height and lining, hence the tall ovals.
+  0: [{ t: 'oval', x: -0.041, y: -0.006, rx: 0.298, ry: 0.378, a: 0 }],
+  1: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.253, ry: 0.377, a: 0 }],
+  2: [{ t: 'oval', x: -0.041, y: -0.005, rx: 0.27, ry: 0.379, a: 0 }],
+  3: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.242, ry: 0.378, a: 0 }],
+  4: [{ t: 'oval', x: -0.041, y: -0.006, rx: 0.298, ry: 0.378, a: 0 }],
+  5: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.256, ry: 0.378, a: 0 }],
+  6: [{ t: 'oval', x: -0.041, y: -0.007, rx: 0.279, ry: 0.378, a: 0 }],
+  7: [{ t: 'ball', x: -0.041, y: -0.007, r: 0.351 }],
+  8: [{ t: 'oval', x: -0.041, y: -0.009, rx: 0.26, ry: 0.38, a: 0 }],
+  9: [{ t: 'oval', x: -0.041, y: -0.008, rx: 0.264, ry: 0.376, a: 0 }],
+
+  // ── ASCII punctuation & symbols ───────────────────────────────────────────────────────────
+  // DERIVED the same way, so the whole printable ASCII set collides as a legible blob. The frame
+  // transform places each mark correctly on its own axis — high (' " ^ `), mid (- = ~ + < >),
+  // low (. , _), or full-height (( ) [ ] { } | / \). Marks whose ink is diagonal or split into
+  // parts (/ \ % & " : ; =) get a single bounding blob that OVER-covers the gaps; that is
+  // deliberate (physics only needs "reads as the mark and slides"), but they are the first
+  // candidates to refine by hand in /glyph-editor — swap in a rotated capsule and re-bake.
+  '"': [{ t: 'ball', x: -0.041, y: -0.248, r: 0.167 }],
+  '#': [{ t: 'ball', x: -0.041, y: -0.008, r: 0.348 }],
+  $: [{ t: 'oval', x: -0.041, y: -0.013, rx: 0.277, ry: 0.48, a: 0 }],
+  '%': [{ t: 'ball', x: -0.041, y: -0.005, r: 0.388 }],
+  '&': [{ t: 'ball', x: -0.045, y: -0.005, r: 0.351 }],
+  "'": [{ t: 'oval', x: -0.041, y: -0.247, rx: 0.07, ry: 0.16, a: 0 }],
+  '(': [{ t: 'oval', x: -0.041, y: 0.048, rx: 0.17, ry: 0.447, a: 0 }],
+  ')': [{ t: 'oval', x: -0.046, y: 0.048, rx: 0.17, ry: 0.447, a: 0 }],
+  '*': [{ t: 'ball', x: -0.041, y: -0.117, r: 0.253 }],
+  '+': [{ t: 'ball', x: -0.041, y: 0.064, r: 0.283 }],
+  ',': [{ t: 'oval', x: -0.041, y: 0.306, rx: 0.103, ry: 0.18, a: 0 }],
+  '-': [{ t: 'oval', x: -0.041, y: 0.084, rx: 0.188, ry: 0.104, a: 0 }],
+  '.': [{ t: 'ball', x: -0.041, y: 0.235, r: 0.128 }],
+  '/': [{ t: 'oval', x: -0.041, y: 0.049, rx: 0.171, ry: 0.46, a: 0 }],
+  ':': [{ t: 'oval', x: -0.041, y: 0.055, rx: 0.102, ry: 0.287, a: 0 }],
+  ';': [{ t: 'oval', x: -0.041, y: 0.11, rx: 0.103, ry: 0.342, a: 0 }],
+  '<': [{ t: 'ball', x: -0.041, y: 0.038, r: 0.307 }],
+  '=': [{ t: 'oval', x: -0.041, y: 0.049, rx: 0.262, ry: 0.218, a: 0 }],
+  '>': [{ t: 'ball', x: -0.041, y: 0.038, r: 0.307 }],
+  '?': [{ t: 'oval', x: -0.041, y: -0.006, rx: 0.23, ry: 0.378, a: 0 }],
+  '@': [{ t: 'ball', x: -0.041, y: 0.047, r: 0.455 }],
+  '[': [{ t: 'oval', x: -0.037, y: 0.045, rx: 0.19, ry: 0.448, a: 0 }],
+  '\\': [{ t: 'oval', x: -0.041, y: 0.054, rx: 0.193, ry: 0.438, a: 0 }],
+  ']': [{ t: 'oval', x: -0.047, y: 0.045, rx: 0.19, ry: 0.448, a: 0 }],
+  '^': [{ t: 'oval', x: -0.041, y: -0.205, rx: 0.156, ry: 0.129, a: 0 }],
+  _: [{ t: 'oval', x: -0.041, y: 0.397, rx: 0.249, ry: 0.094, a: 0 }],
+  '`': [{ t: 'ball', x: -0.038, y: -0.443, r: 0.11 }],
+  '{': [{ t: 'oval', x: -0.041, y: 0.035, rx: 0.23, ry: 0.46, a: 0 }],
+  '|': [{ t: 'oval', x: -0.041, y: 0.055, rx: 0.094, ry: 0.45, a: 0 }],
+  '}': [{ t: 'oval', x: -0.031, y: 0.035, rx: 0.23, ry: 0.46, a: 0 }],
+  '~': [{ t: 'oval', x: -0.041, y: 0.061, rx: 0.275, ry: 0.145, a: 0 }],
 }
 
 /**
@@ -356,5 +404,28 @@ export const makeHullForGlyph =
   (ch: string, hwU: number, hhU: number): HullShape[] =>
     hullForGlyph(ch, hwU, hhU, hulls)
 
-/** @see the doc comment above GLYPH_HULLS. */
-export const EDITABLE_GLYPHS: readonly string[] = [...new Set<string>([...GLYPH_LIST, ...Object.keys(GLYPH_HULLS)])]
+/** One labelled band of glyphs — the unit the editor palette and lab contact sheet lay out by. */
+export interface GlyphGroup {
+  label: string
+  glyphs: readonly string[]
+}
+
+/**
+ * The printable-ASCII set the map covers, banded for the dev tools. `Object.keys(GLYPH_HULLS)` is
+ * insertion-ordered and mixes provenance sections (demo phrase, second wordmark, derived); these
+ * bands re-sort it into the order a human browses in. @see the doc comment above GLYPH_HULLS.
+ */
+export const GLYPH_GROUPS: readonly GlyphGroup[] = [
+  { label: 'Uppercase', glyphs: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'] },
+  { label: 'Lowercase', glyphs: [...'abcdefghijklmnopqrstuvwxyz'] },
+  { label: 'Digits', glyphs: [...'0123456789'] },
+  { label: 'Punctuation', glyphs: [...'!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'] },
+]
+
+/**
+ * Every glyph the dev tools browse, in grouped order (Uppercase → Lowercase → Digits →
+ * Punctuation), followed by any authored glyph outside those bands so nothing is ever unreachable.
+ */
+export const EDITABLE_GLYPHS: readonly string[] = [
+  ...new Set<string>([...GLYPH_GROUPS.flatMap((g) => g.glyphs), ...Object.keys(GLYPH_HULLS)]),
+]

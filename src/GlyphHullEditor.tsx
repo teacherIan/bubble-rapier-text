@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
-import { GLYPH_LIST, GLYPH_HULLS, EDITABLE_GLYPHS, type HullShape } from './glyphHulls'
+import { GLYPH_LIST, GLYPH_HULLS, GLYPH_GROUPS, EDITABLE_GLYPHS, type HullShape } from './glyphHulls'
 import { letterStyle } from './letterStyle'
 
 // Interactive editor for the letter collision hulls. The glyph is rendered in the REAL
@@ -87,16 +87,30 @@ function toCode(hulls: Hulls): string {
         return `{ t: 'oval', x: ${r3(s.x)}, y: ${r3(s.y)}, rx: ${r3(s.rx)}, ry: ${r3(s.ry)}, a: ${r3(s.a)} }`
     }
   }
-  // Serialise the union of the editor's tab order and EVERY authored glyph — not GLYPH_LIST alone.
-  // Keying the export off GLYPH_LIST silently dropped any hull for a glyph outside the demo phrase,
-  // so re-baking after tweaking one letter would delete all the others. That is precisely how this
-  // library and its first consumer drifted into two different hull sets.
-  const keys = [...new Set<string>([...GLYPH_LIST, ...Object.keys(hulls)])]
-  const lines = keys.map((g) => {
-    const arr = hulls[g] ?? []
-    return `  ${/^[A-Za-z]$/.test(g) ? g : `'${g}'`}: [\n${arr.map((s) => `    ${fmt(s)},`).join('\n')}\n  ],`
-  })
-  return `export const GLYPH_HULLS: Record<string, HullShape[]> = {\n${lines.join('\n')}\n}`
+  const entry = (g: string) => `  ${tsKey(g)}: [\n${(hulls[g] ?? []).map((s) => `    ${fmt(s)},`).join('\n')}\n  ],`
+  // Serialise EVERY authored glyph, in grouped order (Uppercase → Lowercase → Digits → Punctuation),
+  // then any key outside those bands under "Other". Keying the export off GLYPH_LIST alone silently
+  // dropped hulls for glyphs outside the demo phrase, so re-baking after tweaking one letter would
+  // delete all the others — precisely how this library and its first consumer drifted apart.
+  const emitted = new Set<string>()
+  const section = (label: string, keys: readonly string[]) => {
+    const present = keys.filter((g) => hulls[g]?.length && !emitted.has(g))
+    present.forEach((g) => emitted.add(g))
+    return present.length ? `  // ── ${label} ──\n${present.map(entry).join('\n')}` : ''
+  }
+  const blocks = GLYPH_GROUPS.map((grp) => section(grp.label, grp.glyphs))
+  const others = Object.keys(hulls).filter((g) => hulls[g]?.length && !emitted.has(g))
+  blocks.push(section('Other', others))
+  return `export const GLYPH_HULLS: Record<string, HullShape[]> = {\n${blocks.filter(Boolean).join('\n')}\n}`
+}
+
+// An object-literal key: bare for identifier-safe single chars (letters, digits, _ and $), else a
+// quoted string with the right quote char so `'` and `\` don't emit malformed TS.
+const tsKey = (g: string): string => {
+  if (/^[A-Za-z0-9_$]$/.test(g)) return g
+  if (g === "'") return `"'"`
+  if (g === '\\') return `'\\\\'`
+  return `'${g}'`
 }
 
 type DragMode =
@@ -382,6 +396,32 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
   const HANDLE = 7
   const selShape = sel >= 0 ? shapes[sel] : null
 
+  // Lay the tab list out in labelled bands (Uppercase / Lowercase / Digits / Punctuation). Each
+  // button keeps its index into the flat `glyphs` array so arrow-key nav and selection stay in
+  // sync; any glyph outside the known bands falls into a trailing "Other" section, so a custom
+  // `glyphs` prop is still fully browsable.
+  const demoSet = useMemo(() => new Set<string>(GLYPH_LIST), [])
+  const bands = useMemo(() => {
+    const idx = new Map<string, number>()
+    glyphs.forEach((g, i) => {
+      if (!idx.has(g)) idx.set(g, i)
+    })
+    const seen = new Set<string>()
+    const out: { label: string; items: { g: string; i: number }[] }[] = []
+    for (const grp of GLYPH_GROUPS) {
+      const items = grp.glyphs.flatMap((g) => {
+        const i = idx.get(g)
+        if (i == null) return []
+        seen.add(g)
+        return [{ g, i }]
+      })
+      if (items.length) out.push({ label: grp.label, items })
+    }
+    const others = glyphs.map((g, i) => ({ g, i })).filter(({ g }) => !seen.has(g))
+    if (others.length) out.push({ label: 'Other', items: others })
+    return out
+  }, [glyphs])
+
   return (
     <div style={{ display: 'flex', gap: 16, padding: 16, height: '100%', boxSizing: 'border-box', fontFamily: 'system-ui', background: '#fff', color: '#1f2433' }}>
       {/* canvas + svg editing layer */}
@@ -523,27 +563,44 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
 
       {/* controls */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {glyphs.map((g, i) => (
-            <button
-              key={g + i}
-              onClick={() => {
-                setGi(i)
-                select(-1)
-              }}
-              style={{
-                width: 34,
-                height: 34,
-                fontSize: 16,
-                fontWeight: 700,
-                borderRadius: 6,
-                cursor: 'pointer',
-                border: i === gi ? '2px solid #ff2d6b' : '1px solid #d4dae6',
-                background: i === gi ? '#fff0f4' : '#fff',
-              }}
-            >
-              {g}
-            </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {bands.map((band) => (
+            <div key={band.label}>
+              <div style={groupLabel}>
+                {band.label} <span style={{ opacity: 0.55, fontWeight: 400 }}>({band.items.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {band.items.map(({ g, i }) => {
+                  const active = i === gi
+                  const empty = !hulls[g]?.length
+                  const demo = demoSet.has(g)
+                  return (
+                    <button
+                      key={g + i}
+                      onClick={() => {
+                        setGi(i)
+                        select(-1)
+                      }}
+                      title={demo ? `‘${g}’ — in the demo phrase` : `‘${g}’`}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        fontSize: 15,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        border: active ? '2px solid #ff2d6b' : demo ? '1px solid #ffb3c9' : '1px solid #d4dae6',
+                        background: active ? '#fff0f4' : '#fff',
+                        color: empty ? '#c2c8d2' : '#1f2433',
+                      }}
+                    >
+                      {g}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           ))}
         </div>
 
@@ -563,7 +620,8 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
         <div style={{ fontSize: 13, lineHeight: 1.5 }}>
           <b>‘{glyph}’</b> — {shapes.length} shape(s). Click to select; drag body to move. White dots =
           capsule ends; yellow = size (capsule width / rect corner / oval radius); blue = rotate. A
-          rect/oval scales x &amp; y independently — drag a yellow handle to make it “just wider.” Arrows ←/→ switch letters.
+          rect/oval scales x &amp; y independently — drag a yellow handle to make it “just wider.” Arrows ←/→ switch glyphs;
+          <span style={{ color: '#ff5c86', fontWeight: 700 }}> pink</span> tabs are the demo phrase, greyed tabs have no hull yet.
         </div>
 
         {selShape && (
@@ -602,6 +660,15 @@ const btn: CSSProperties = {
   border: '1px solid #d4dae6',
   background: '#fff',
   cursor: 'pointer',
+}
+
+const groupLabel: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: 0.6,
+  color: '#8893a8',
+  marginBottom: 4,
 }
 
 function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {

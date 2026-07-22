@@ -133,8 +133,8 @@ import {
   planClaims,
   // slots derived from the live viewport; recompute on resize
   createLineLayout,
-  // glyph hulls — pass your own map, or bind one with makeHullForGlyph
-  GLYPH_HULLS, GLYPH_LIST, EDITABLE_GLYPHS, hullForGlyph, makeHullForGlyph, scaleHull, strokeHullPx,
+  // glyph hulls — pass your own map, or bind one with makeHullForGlyph. Covers all printable ASCII.
+  GLYPH_HULLS, GLYPH_LIST, GLYPH_GROUPS, EDITABLE_GLYPHS, hullForGlyph, makeHullForGlyph, scaleHull, strokeHullPx,
   // the ONE text style the component and both dev tools render with
   letterStyle, metricStyle, FONT_STACK,
   // shared Rapier-world primitives; setRapierLoader swaps in your own WASM build
@@ -231,12 +231,24 @@ slide past each other. The hulls are authored in **font-size units** with the or
 glyph centre (the PIXI text anchor `0.5`), so a hull authored against the rendered glyph drops
 straight onto the physics body with no per-glyph calibration.
 
-To retune a letter:
+**Coverage.** `GLYPH_HULLS` ships a hull for the whole **printable-ASCII set** — all 52 letters,
+the ten digits, and every ASCII punctuation mark — so the engine can set *any* word or number, not
+just the demo phrase. The demo-phrase letters are hand-traced; the rest are **derived** from the
+Cherry Bomb One outlines by the fitted ink-box→frame transform (one ball where the ink is roughly
+square, an axis-aligned oval otherwise), which reproduces the hand-placed hulls to within ~2 % of
+the glyph. Diagonal or split marks (`/ \ % & " : ; =`) get a single bounding blob that over-covers
+the gaps — fine for physics ("reads as the mark and slides"), but the first candidates to refine by
+hand. Anything the map *doesn't* cover (accented Latin-1, symbols) still works via `hullForGlyph`'s
+single-ball fallback. `GLYPH_GROUPS` bands the set (Uppercase / Lowercase / Digits / Punctuation)
+for the dev tools.
 
-1. `npm run dev` → **Hull editor**.
+To retune a glyph:
+
+1. `npm run dev` → **Hull editor**. The palette is grouped into those bands; demo-phrase glyphs are
+   pink-bordered.
 2. Pick the glyph, drag the body / yellow size handles / blue rotate handle. `b`/`c`/`x`/`v`
-   add a ball/capsule/rect/oval; `⌫` deletes; `←`/`→` switch letters.
-3. Hit **Copy code** and paste the `GLYPH_HULLS` block back into
+   add a ball/capsule/rect/oval; `⌫` deletes; `←`/`→` switch glyphs.
+3. Hit **Copy code** and paste the grouped `GLYPH_HULLS` block back into
    [`src/glyphHulls.ts`](src/glyphHulls.ts).
 
 Edits also mirror to `localStorage` (key `celebrateGlyphHulls.v1`) so the editor survives a

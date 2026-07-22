@@ -59,9 +59,11 @@ export {
 export {
   GLYPH_HULLS,
   GLYPH_LIST,
+  GLYPH_GROUPS, // printable-ASCII bands (Uppercase / Lowercase / Digits / Punctuation) for the dev tools
   hullForGlyph,
   makeHullForGlyph, // bind your OWN hull map once, then pass the 3-arg result down the build path
-  EDITABLE_GLYPHS, // every authored glyph, in dev-tool tab order
+  EDITABLE_GLYPHS, // every authored glyph, in grouped dev-tool tab order
+  type GlyphGroup,
   scaleHull,
   strokeHullPx,
   type HullShape,

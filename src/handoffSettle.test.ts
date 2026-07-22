@@ -4,7 +4,6 @@ import {
   stepCelebrate,
   addLetter,
   retargetLetter,
-  scatterLetter,
   cullDiscarded,
   removeWalls,
   armEnclosureNow,

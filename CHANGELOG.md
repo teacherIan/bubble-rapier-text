@@ -2,6 +2,35 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.9.0 — 2026-07-22
+
+The bundled hull map becomes a standard library: it now covers the **whole printable-ASCII set**,
+so the engine can set any word or number, and the Hull editor is organized to match.
+
+### Added
+- **Digits 0–9 and every ASCII punctuation mark now have authored hulls.** They are *derived* from
+  the Cherry Bomb One outlines by the same fitted ink-box→frame transform as the A–Z set (one ball
+  where the ink is roughly square, an axis-aligned oval otherwise), which reproduces the hand-placed
+  hulls to within ~2 % of the glyph. Previously these fell back to a generic centred ball, which
+  mis-placed off-centre marks (high apostrophes, low commas, tall bars). Diagonal/split marks
+  (`/ \ % & " : ; =`) get a single bounding blob — deliberate, and flagged in-source as the first
+  candidates to refine by hand.
+- **`GLYPH_GROUPS`** (and the `GlyphGroup` type) — the printable-ASCII set banded into
+  Uppercase / Lowercase / Digits / Punctuation, for the editor palette and lab contact sheet.
+
+### Changed
+- **Retuned the hand-authored and derived hulls** from an editor pass (includes collapsing `!` from
+  a stem+dot pair into one slim capsule).
+- **`EDITABLE_GLYPHS` now enumerates the full ASCII set in grouped order** (Uppercase → Lowercase →
+  Digits → Punctuation) instead of demo-phrase-first. The **Hull editor** palette is laid out in
+  those labelled bands (demo-phrase glyphs pink-bordered), the **Hull lab** contact sheet follows,
+  and the editor's *Copy code* output is grouped with section-header comments.
+
+### Fixed
+- **The editor's baked-code emitted malformed TypeScript for the `'` and `\` glyph keys** (`'''`
+  and `'\'`). Keys are now quoted correctly (`"'"` and `'\\'`), so a re-bake that includes those
+  marks pastes back cleanly.
+
 ## 0.8.4 — 2026-07-22
 
 Minor stability polish (audit follow-ups).
