@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
-import { GLYPH_HULLS, EDITABLE_GLYPHS, scaleHull, strokeHullPx, hullForGlyph } from './glyphHulls'
+import { GLYPH_HULLS, EDITABLE_GLYPHS, scaleHull, strokeHullPx, makeHullForGlyph, type HullShape } from './glyphHulls'
 import { letterStyle } from './letterStyle'
 
 // Calibration harness for hand-authoring the letter collision hulls. Renders glyphs in
@@ -62,9 +62,19 @@ function major(v: number) {
   return Math.abs(v % 0.5) < 1e-6
 }
 
-function drawHullOverlay(stage: PIXI.Container, ch: string, ox: number, oy: number, size: number, hwU: number, hhU: number) {
-  const shapes = scaleHull(hullForGlyph(ch, hwU, hhU), size)
-  const authored = (GLYPH_HULLS[ch]?.length ?? 0) > 0
+function drawHullOverlay(
+  stage: PIXI.Container,
+  ch: string,
+  ox: number,
+  oy: number,
+  size: number,
+  hwU: number,
+  hhU: number,
+  hullFor: (c: string, hw: number, hh: number) => HullShape[],
+  hulls: Record<string, HullShape[]>,
+) {
+  const shapes = scaleHull(hullFor(ch, hwU, hhU), size)
+  const authored = (hulls[ch]?.length ?? 0) > 0
   const g = new PIXI.Graphics()
   strokeHullPx(g, shapes, ox, oy)
   g.stroke({ width: Math.max(2, size * 0.012), color: authored ? 0xff3b6b : 0xffa600, alpha: 0.95 })
@@ -76,7 +86,10 @@ function drawHullOverlay(stage: PIXI.Container, ch: string, ox: number, oy: numb
   stage.addChild(dots)
 }
 
-export function GlyphHullLab({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly string[] } = {}) {
+export function GlyphHullLab({
+  glyphs = EDITABLE_GLYPHS,
+  hulls = GLYPH_HULLS,
+}: { glyphs?: readonly string[]; hulls?: Record<string, HullShape[]> } = {}) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -108,6 +121,7 @@ export function GlyphHullLab({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly s
       el.appendChild(app.canvas)
 
       const { i, g, hull, all } = params()
+      const hullFor = makeHullForGlyph(hulls)
 
       const addGlyph = (ch: string, cx: number, cy: number, size: number) => {
         drawGrid(app!.stage, cx, cy, size)
@@ -119,7 +133,7 @@ export function GlyphHullLab({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly s
         app!.stage.addChild(t)
         const hwU = Math.max(0.06, (t.width * 0.42) / size)
         const hhU = Math.max(0.06, (t.height * 0.4) / size)
-        if (hull) drawHullOverlay(app!.stage, ch, cx, cy, size, hwU, hhU)
+        if (hull) drawHullOverlay(app!.stage, ch, cx, cy, size, hwU, hhU, hullFor, hulls)
         // Label
         const lab = new PIXI.Text({ text: `'${ch}'`, style: { fontFamily: 'monospace', fontSize: 16, fill: 0x222222 } })
         lab.position.set(cx - size * 0.78, cy - size * 0.85)
@@ -151,7 +165,7 @@ export function GlyphHullLab({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly s
       cancelled = true
       app?.destroy({ removeView: true }, { children: true })
     }
-  }, [glyphs])
+  }, [glyphs, hulls])
 
   return <div ref={ref} style={{ position: 'fixed', inset: 0, background: '#fff', overflow: 'hidden' }} />
 }

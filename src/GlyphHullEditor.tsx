@@ -13,27 +13,51 @@ import { letterStyle } from './letterStyle'
 const BOX = 720 // editor canvas is a fixed square (deterministic — no viewport races)
 const CX = BOX / 2
 const CY = BOX / 2
-const UNIT = 300 // px per font-size unit
+const UNIT = 300 // px per unit (glyph: font-size unit; an extra object: 1 unit along its chosen dimension)
 const EXTENT = 1.05 // grid half-extent in units
-const LS_KEY = 'celebrateGlyphHulls.v1'
+const DEFAULT_STORAGE_KEY = 'celebrateGlyphHulls.v1'
 
 type Hulls = Record<string, HullShape[]>
 
+/**
+ * A non-glyph editable object shown as its own tab alongside the letters — e.g. a mascot whose
+ * collider you also want to author on the same grid. Its `asset` image is drawn at exactly 1 unit
+ * along `unit` (so its hull's units line up with the grid), and it gets a hull entry keyed by `id`.
+ */
+export type HullExtraObject = {
+  /** Key in the hull map + the tab's label (e.g. a mascot emoji '🐆'). */
+  id: string
+  /** Image URL, drawn on the grid at exactly 1 unit along `unit` (aspect preserved). */
+  asset: string
+  /** Which sprite dimension maps to 1 grid unit. Default 'width'. */
+  unit?: 'width' | 'height'
+  /** This object's starting hull (also what "Reset" restores). */
+  hull?: HullShape[]
+  /** Tooltip / accessible label for the tab (defaults to `id`). */
+  label?: string
+  /**
+   * If set, the exported code puts this object in its OWN `export const <exportAs>: HullShape[]`
+   * block and omits it from the `GLYPH_HULLS` map. Omit to fold it into the map like a glyph.
+   */
+  exportAs?: string
+}
+
+const EMPTY_EXTRAS: readonly HullExtraObject[] = []
+
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 
-function loadHulls(): Hulls {
+function loadHulls(storageKey: string, base: Hulls): Hulls {
   try {
-    const raw = localStorage.getItem(LS_KEY)
+    const raw = localStorage.getItem(storageKey)
     if (raw) {
       const parsed = JSON.parse(raw) as Hulls
-      // ensure every glyph has an entry (fall back to defaults)
-      const base = clone(GLYPH_HULLS) as Hulls
-      return { ...base, ...parsed }
+      // ensure every object has an entry (the saved blob wins, defaults fill the gaps)
+      return { ...clone(base), ...parsed }
     }
   } catch {
     /* ignore */
   }
-  return clone(GLYPH_HULLS) as Hulls
+  return clone(base)
 }
 
 // unit ↔ screen
@@ -74,7 +98,7 @@ function capsulePath(s: Extract<HullShape, { t: 'cap' }>): string {
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000
 
-function toCode(hulls: Hulls): string {
+function toCode(hulls: Hulls, extras: readonly HullExtraObject[]): string {
   const fmt = (s: HullShape) => {
     switch (s.t) {
       case 'ball':
@@ -92,7 +116,9 @@ function toCode(hulls: Hulls): string {
   // then any key outside those bands under "Other". Keying the export off GLYPH_LIST alone silently
   // dropped hulls for glyphs outside the demo phrase, so re-baking after tweaking one letter would
   // delete all the others — precisely how this library and its first consumer drifted apart.
-  const emitted = new Set<string>()
+  // Extra objects that carry their own `exportAs` are lifted OUT of the map into their own block.
+  const exportedIds = new Set(extras.filter((e) => e.exportAs).map((e) => e.id))
+  const emitted = new Set<string>(exportedIds)
   const section = (label: string, keys: readonly string[]) => {
     const present = keys.filter((g) => hulls[g]?.length && !emitted.has(g))
     present.forEach((g) => emitted.add(g))
@@ -101,7 +127,14 @@ function toCode(hulls: Hulls): string {
   const blocks = GLYPH_GROUPS.map((grp) => section(grp.label, grp.glyphs))
   const others = Object.keys(hulls).filter((g) => hulls[g]?.length && !emitted.has(g))
   blocks.push(section('Other', others))
-  return `export const GLYPH_HULLS: Record<string, HullShape[]> = {\n${blocks.filter(Boolean).join('\n')}\n}`
+  const glyphBlock = `export const GLYPH_HULLS: Record<string, HullShape[]> = {\n${blocks.filter(Boolean).join('\n')}\n}`
+  const extraBlocks = extras
+    .filter((e) => e.exportAs)
+    .map((e) => {
+      const arr = hulls[e.id] ?? []
+      return `export const ${e.exportAs}: HullShape[] = [\n${arr.map((s) => `  ${fmt(s)},`).join('\n')}\n]`
+    })
+  return [glyphBlock, ...extraBlocks].join('\n\n')
 }
 
 // An object-literal key: bare for identifier-safe single chars (letters, digits, _ and $), else a
@@ -138,14 +171,42 @@ function invRotLocal(a: number, dx: number, dy: number) {
 
 const DEAD_ZONE = 0.012 // a click within this (in units) only selects; drag beyond to move
 
-export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonly string[] } = {}) {
+export function GlyphHullEditor({
+  glyphs = EDITABLE_GLYPHS,
+  hulls: initialHulls = GLYPH_HULLS,
+  extraObjects = EMPTY_EXTRAS,
+  storageKey = DEFAULT_STORAGE_KEY,
+}: {
+  glyphs?: readonly string[]
+  /** Injected authored-hull DATA (defaults to the library's demo set). Bind your app's map here. */
+  hulls?: Record<string, HullShape[]>
+  /** Non-glyph editable objects (a mascot with an image backdrop), shown as extra tabs. */
+  extraObjects?: readonly HullExtraObject[]
+  /** localStorage namespace, so two consumers on one origin don't clobber each other's WIP. */
+  storageKey?: string
+} = {}) {
   const pixiHostRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<PIXI.Text | null>(null)
+  const spritesRef = useRef<Record<string, PIXI.Sprite>>({}) // one backdrop sprite per extra object, by id
   const svgRef = useRef<SVGSVGElement>(null)
 
+  // Tab order: the glyphs, then every extra object. `extraById` classifies the active tab.
+  const objects = useMemo(() => [...glyphs, ...extraObjects.map((o) => o.id)], [glyphs, extraObjects])
+  const extraById = useMemo(() => new Map(extraObjects.map((o) => [o.id, o])), [extraObjects])
+  const extraObjectsRef = useRef(extraObjects) // the PIXI build effect runs once; read the current set through a ref
+  extraObjectsRef.current = extraObjects
+
+  // Starting hulls: the injected glyph data plus each extra object's default hull.
+  const buildBase = (): Hulls => ({
+    ...(clone(initialHulls) as Hulls),
+    ...Object.fromEntries(extraObjects.map((o) => [o.id, clone(o.hull ?? [])])),
+  })
+  const defaultsFor = (id: string): HullShape[] => clone(extraById.get(id)?.hull ?? initialHulls[id] ?? [])
+
   const [gi, setGi] = useState(0)
-  const glyph = glyphs[gi]
-  const [hulls, setHulls] = useState<Hulls>(() => loadHulls())
+  const glyph = objects[gi]
+  const isExtra = extraById.has(glyph)
+  const [hulls, setHulls] = useState<Hulls>(() => loadHulls(storageKey, buildBase()))
   const [sel, setSel] = useState(-1)
   const dragRef = useRef<DragMode | null>(null)
   const [glyphAlpha, setGlyphAlpha] = useState(0.6)
@@ -165,15 +226,15 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
   }
 
   // persist + recompute code on every change
-  const code = useMemo(() => toCode(hulls), [hulls])
+  const code = useMemo(() => toCode(hulls, extraObjects), [hulls, extraObjects])
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify(hulls))
+      localStorage.setItem(storageKey, JSON.stringify(hulls))
       if (import.meta.env?.DEV) (window as unknown as { __glyphHulls?: Hulls }).__glyphHulls = hulls // dev-only read-out (prod uses Copy code)
     } catch {
       /* ignore */
     }
-  }, [hulls])
+  }, [hulls, storageKey])
 
   // ── PIXI: grid + glyph (fixed-size, faithful origin) ───────────────────────────
   useEffect(() => {
@@ -239,20 +300,47 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
       t.position.set(CX, CY)
       app.stage.addChild(t)
       textRef.current = t
+
+      // Backdrop sprites for any extra objects (a mascot), each drawn EXACTLY 1 unit along its
+      // chosen dimension so its hull units line up with the grid. Hidden until that tab is picked;
+      // the [glyph]/[glyphAlpha] effects below flip visibility + alpha.
+      for (const o of extraObjectsRef.current) {
+        try {
+          const tex = await PIXI.Assets.load(o.asset)
+          if (cancelled || !app) break
+          const sp = new PIXI.Sprite(tex)
+          sp.anchor.set(0.5)
+          sp.position.set(CX, CY)
+          sp.scale.set(o.unit === 'height' ? UNIT / tex.height : UNIT / tex.width)
+          sp.visible = false
+          app.stage.addChild(sp)
+          spritesRef.current[o.id] = sp
+        } catch {
+          /* asset missing → that tab just shows the grid + hull */
+        }
+      }
     })()
     return () => {
       cancelled = true
       textRef.current = null
+      spritesRef.current = {}
       app?.destroy({ removeView: true }, { children: true })
     }
   }, [])
 
-  // update glyph + its alpha when selection of glyph / alpha changes
+  // swap between the glyph Text and the active extra-object Sprite, and sync the backdrop alpha
   useEffect(() => {
-    if (textRef.current) textRef.current.text = glyph
-  }, [glyph])
+    const t = textRef.current
+    if (t) {
+      t.visible = !isExtra
+      if (!isExtra) t.text = glyph
+    }
+    for (const [id, sp] of Object.entries(spritesRef.current)) sp.visible = id === glyph
+  }, [glyph, isExtra])
   useEffect(() => {
     if (textRef.current) textRef.current.alpha = glyphAlpha
+    const sp = spritesRef.current[glyph]
+    if (sp) sp.alpha = glyphAlpha
   }, [glyphAlpha, glyph])
 
   // ── editing ───────────────────────────────────────────────────────────────────
@@ -371,7 +459,7 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
   const resetGlyph = () =>
     setHulls((h) => {
       const next = clone(h)
-      next[glyph] = clone(GLYPH_HULLS[glyph] ?? [])
+      next[glyph] = defaultsFor(glyph)
       return next
     })
 
@@ -385,8 +473,8 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
       else if (e.key === 'c') addCap()
       else if (e.key === 'x') addRect()
       else if (e.key === 'v') addOval()
-      else if (e.key === 'ArrowRight') setGi((i) => (i + 1) % glyphs.length)
-      else if (e.key === 'ArrowLeft') setGi((i) => (i - 1 + glyphs.length) % glyphs.length)
+      else if (e.key === 'ArrowRight') setGi((i) => (i + 1) % objects.length)
+      else if (e.key === 'ArrowLeft') setGi((i) => (i - 1 + objects.length) % objects.length)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -419,8 +507,12 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
     }
     const others = glyphs.map((g, i) => ({ g, i })).filter(({ g }) => !seen.has(g))
     if (others.length) out.push({ label: 'Other', items: others })
+    // extra objects (a mascot) index into `objects` AFTER the glyphs
+    if (extraObjects.length) {
+      out.push({ label: 'Objects', items: extraObjects.map((o, k) => ({ g: o.id, i: glyphs.length + k })) })
+    }
     return out
-  }, [glyphs])
+  }, [glyphs, extraObjects])
 
   return (
     <div style={{ display: 'flex', gap: 16, padding: 16, height: '100%', boxSizing: 'border-box', fontFamily: 'system-ui', background: '#fff', color: '#1f2433' }}>
@@ -581,7 +673,7 @@ export function GlyphHullEditor({ glyphs = EDITABLE_GLYPHS }: { glyphs?: readonl
                         setGi(i)
                         select(-1)
                       }}
-                      title={demo ? `‘${g}’ — in the demo phrase` : `‘${g}’`}
+                      title={extraById.get(g)?.label ?? (demo ? `‘${g}’ — in the demo phrase` : `‘${g}’`)}
                       style={{
                         width: 32,
                         height: 32,

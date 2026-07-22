@@ -2,6 +2,26 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.10.0 — 2026-07-22
+
+Consumer-facing hull tooling: a project can now point `GlyphHullEditor` / `GlyphHullLab` at its
+OWN glyph set + authored hulls (and a mascot), instead of forking the tools to swap in demo data.
+
+### Added
+- **`hulls` prop on `GlyphHullEditor` and `GlyphHullLab`** — the injected authored-hull map to
+  edit / overlay. Defaults to the built-in `GLYPH_HULLS`, so existing no-prop mounts are unchanged.
+  Pair with `makeHullForGlyph(hulls)` at the app boundary.
+- **`extraObjects` prop on `GlyphHullEditor`** — non-glyph editable objects (e.g. a mascot) shown
+  as extra tabs (a trailing "Objects" band), each with an image backdrop drawn at exactly 1 grid
+  unit (`unit: 'width' | 'height'`) and its own default hull. An object with `exportAs` is emitted
+  as its own `export const <name>: HullShape[]` block instead of folded into the `GLYPH_HULLS` map.
+  New `HullExtraObject` type exported.
+- **`storageKey` prop on `GlyphHullEditor`** — namespaces the localStorage WIP so two consumers on
+  one origin don't clobber each other's in-progress hulls.
+
+All three props are optional and default to today's behavior; the library's own demo mounts need no
+changes.
+
 ## 0.9.0 — 2026-07-22
 
 The bundled hull map becomes a standard library: it now covers the **whole printable-ASCII set**,

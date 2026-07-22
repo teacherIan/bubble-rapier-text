@@ -11,7 +11,7 @@
 
 // ── React components ──────────────────────────────────────────────────────────
 export { CelebrateBubbles } from './CelebrateBubbles'
-export { GlyphHullEditor } from './GlyphHullEditor'
+export { GlyphHullEditor, type HullExtraObject } from './GlyphHullEditor'
 export { GlyphHullLab } from './GlyphHullLab'
 
 // ── Framework-free physics (Rapier only — drive it from your own render loop) ──
