@@ -295,6 +295,12 @@ export function CelebrateBubbles({
 
       const app = new PIXI.Application()
       await app.init({
+        // PIXI 8.19's texture GC can double-return a canvas-text texture our
+        // explicit destroy already returned — TexturePool.returnTexture then
+        // reads an undefined pool entry and throws (at runtime from the GC
+        // pass, at teardown inside app.destroy). We destroy every Text we
+        // create, so the GC buys nothing here: keep it off.
+        textureGCActive: false,
         width: w,
         height: h,
         backgroundAlpha: 0,

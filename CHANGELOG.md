@@ -2,6 +2,16 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.8.2 — 2026-07-22
+
+### Fixed
+
+- **Texture GC off for the letter canvas** (`textureGCActive: false`). PIXI 8.19's texture GC
+  can double-return a canvas-text texture an explicit destroy already returned —
+  `TexturePool.returnTexture` then reads an undefined pool entry and throws, at runtime from
+  the GC pass and at teardown inside `app.destroy` (the crash `safeDestroyApp` was swallowing).
+  This component destroys every Text it creates, so the GC bought nothing here.
+
 ## 0.8.1 — 2026-07-21
 
 ### Fixed
