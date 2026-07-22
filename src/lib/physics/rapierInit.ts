@@ -44,6 +44,15 @@ export function setRapierLoader(next: RapierLoader): void {
 }
 
 export async function ensureRapierInitialized(): Promise<typeof RAPIER> {
-  if (!initPromise) initPromise = loader()
+  // Don't cache a REJECTED init: a transient loader failure (a CDN blip on a
+  // custom loader, a one-off R.init() reject) must not wedge Rapier for the
+  // life of the page. Clearing initPromise on failure lets a later call — or a
+  // freshly setRapierLoader'd loader — retry.
+  if (!initPromise) {
+    initPromise = loader().catch((err) => {
+      initPromise = null
+      throw err
+    })
+  }
   return initPromise
 }

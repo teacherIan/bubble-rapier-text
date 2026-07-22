@@ -14,6 +14,7 @@ import {
   removeLetter,
   addLetter,
   retargetLetter,
+  resizeLetterColliders,
   resizeWorld,
   removeWalls,
   scatterLetter,
@@ -402,6 +403,13 @@ export function CelebrateBubbles({
 
       let { slots, fit, sizes } = layout(w, h)
       let lastSig = layout.signature(w)
+      // After a word-to-word transition the parallel arrays are NO LONGER in
+      // slot order (survivors keep their old index, spawns append, scattered
+      // debris still occupies indices). The resize re-home path assumes
+      // renderLetters[i] ↔ slots[i], so until a structural rebuild restores
+      // that order, a same-size resize must be forced structural or it would
+      // reassemble the wordmark scrambled. Set on transition, cleared on rebuild.
+      let slotOrderDirty = false
       const specs: LetterSpec[] = []
       for (const slot of slots) {
         const { spec, render } = specFor(slot)
@@ -710,7 +718,11 @@ export function CelebrateBubbles({
         // it in front. (Indices below refer to the pre-spawn arrays; the spawn loop only appends.)
         for (const { slot, survivor } of plan) {
           if (survivor < 0) continue
-          refitLetter(renderLetters[survivor], slot)
+          refitLetter(renderLetters[survivor], slot) // updates render + r.colliders to the new size
+          // Rebuild the PHYSICS hull to match: refit/retarget move+restyle but
+          // leave the body's colliders frozen at the old size, so a survivor in
+          // a differently-sized phrase would collide as its old self and never settle.
+          resizeLetterColliders(world, survivor, renderLetters[survivor].colliders)
           retargetLetter(world, survivor, slot.x, slot.y)
           renderLetters[survivor].text.zIndex = 1
         }
@@ -735,6 +747,7 @@ export function CelebrateBubbles({
         fit = next.fit
         sizes = next.sizes
         lastSig = nextSig
+        slotOrderDirty = true // arrays are now out of slot order — see the flag's declaration
       }
 
       // Rebuild the layout from the current props and morph to it — UNLESS the words are unchanged
@@ -790,7 +803,9 @@ export function CelebrateBubbles({
         // cannot cross, pressing against it forever. So a change in the fitted SIZE (or the line
         // set) rebuilds and snaps; only a height-only change, which leaves x untouched, re-homes.
         const sizeChanged = Math.abs((next.sizes[0] ?? 0) - (sizes[0] ?? 0)) > 0.5
-        const structural = sig !== lastSig || next.slots.length !== renderLetters.length || sizeChanged
+        // slotOrderDirty forces a rebuild (which re-deals in slot order) instead
+        // of the by-index re-home, which would scramble a post-transition array.
+        const structural = sig !== lastSig || next.slots.length !== renderLetters.length || sizeChanged || slotOrderDirty
         if (structural) {
           releaseDrag(world) // detach the joint BEFORE freeing the bodies it pins
           for (let i = renderLetters.length - 1; i >= 0; i--) {
@@ -818,6 +833,7 @@ export function CelebrateBubbles({
               b.setAngvel(0, true)
             }
           }
+          slotOrderDirty = false // the re-deal restored slot order
         } else {
           // Same structure at a new size: re-home in place. Cheap, and no letter blinks out.
           next.slots.forEach((slot, i) => {

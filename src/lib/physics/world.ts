@@ -58,7 +58,14 @@ export interface WallCageOptions {
 export interface WallCage {
   /** [top, bottom, left, right] — for callers that remove the whole cage on resize. */
   walls: RAPIER.RigidBody[]
-  /** The bottom wall, exposed so callers can drop the floor (e.g. let bodies fall out). */
+  /**
+   * The bottom wall, exposed so callers can drop the floor (e.g. let bodies
+   * fall out). **This is the SAME body as `walls[1]`** — it is not a separate
+   * handle. If you drop the floor with `world.removeRigidBody(cage.floor)`,
+   * splice it out of `walls` before you tear the rest of the cage down, or you
+   * will call `removeRigidBody` twice on one body — a double free that panics
+   * the Rapier WASM instance (unrecoverable). `walls.filter(w => w !== floor)`.
+   */
   floor: RAPIER.RigidBody
 }
 

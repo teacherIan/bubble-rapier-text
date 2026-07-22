@@ -24,6 +24,7 @@ export {
   // fling the rest off, fly missing ones in)
   removeWalls,
   retargetLetter,
+  resizeLetterColliders,
   scatterLetter,
   addLetter,
   removeLetter, // remove one body (splice your parallel render array at the same index)

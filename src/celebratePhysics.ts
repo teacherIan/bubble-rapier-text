@@ -356,6 +356,36 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
 }
 
 /**
+ * Rebuild a surviving letter's colliders at a new size, in place on its body —
+ * for a word-to-word morph where a reused glyph is re-fitted (a longer phrase
+ * fits smaller). `retargetLetter` moves the body but leaves its hull frozen at
+ * the size it was CREATED, so without this a survivor collides as its OLD, too-
+ * large self: in a tighter word adjacent survivors overlap and shove each other
+ * off their slots, and the slot springs never settle — `settledFrames` never
+ * crosses idle, so a self-driven host's ticker never stops (mobile battery).
+ * `colliders` is the new-size px hull, the same shape createLetterBody consumes.
+ */
+export function resizeLetterColliders(state: CelebrateWorld, index: number, colliders: PxShape[]): void {
+  const L = state.letters[index]
+  if (!L || colliders.length === 0) return
+  const { rapier, world } = state
+  const body = L.body
+  // Remove the current colliders. body.collider(i) returns the Collider object;
+  // collect them first — removing shifts the remaining indices.
+  const doomed: RAPIER.Collider[] = []
+  for (let i = 0; i < body.numColliders(); i++) doomed.push(body.collider(i))
+  for (const c of doomed) world.removeCollider(c, false)
+  // Rebuild at the new size — identical params to createLetterBody's loop.
+  for (const c of colliders) {
+    const desc = colliderDescFor(rapier, c)
+    if (desc) world.createCollider(desc.setTranslation(c.x, c.y).setRotation(shapeRot(c)).setRestitution(RESTITUTION).setDensity(1), body)
+  }
+  // The springs read these cached values; a collider change doesn't refresh them.
+  L.mass = body.mass()
+  L.inertia = body.principalInertia()
+}
+
+/**
  * Fling a letter off-screen: kill its homing spring (discarded), give it a strong random velocity +
  * spin, and let gravity carry it off. The collider stays ENABLED either way — disabling it would zero
  * the body's mass, which kills gravity and freezes the letter on-screen (see setLetterPassthrough).
@@ -718,7 +748,12 @@ function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): vo
     const av = L.body.angvel()
     if (!Number.isFinite(p.x + p.y + v.x + v.y + r + av)) {
       console.error('[bubble-rapier-text] non-finite pose; resetting letter to slot', { i, x: p.x, y: p.y, vx: v.x, vy: v.y, rot: r, angvel: av, tx: L.tx, ty: L.ty, ghost: L.ghost, discarded: L.discarded })
-      L.body.setTranslation({ x: L.tx, y: L.ty }, true)
+      // Guard the reset target too: a non-finite slot (tx/ty) would make this
+      // safety net a no-op that re-injects NaN forever. Fall back to the world
+      // center so a bad slot recovers to something visible.
+      const rx = Number.isFinite(L.tx) ? L.tx : state.w / 2
+      const ry = Number.isFinite(L.ty) ? L.ty : state.h / 2
+      L.body.setTranslation({ x: rx, y: ry }, true)
       L.body.setRotation(0, true)
       L.body.setLinvel({ x: 0, y: 0 }, true)
       L.body.setAngvel(0, true)

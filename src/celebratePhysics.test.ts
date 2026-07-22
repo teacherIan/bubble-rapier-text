@@ -6,6 +6,7 @@ import {
   scatterLetter,
   cullDiscarded,
   retargetLetter,
+  resizeLetterColliders,
   exitCelebrate,
   resizeWorld,
   removeWalls,
@@ -476,5 +477,49 @@ describe('setWallGroups', () => {
     resizeWorld(w, 900, 700, 60, 20)
     expect(groupsOf(w.floorBody!)).toContain(GROUPS)
     for (const wall of w.walls) expect(groupsOf(wall)).toContain(GROUPS)
+  })
+})
+
+describe('resizeLetterColliders', () => {
+  it('rebuilds a survivor body at the new size, so its cached mass tracks the new hull', async () => {
+    // The bug: on a size-changing morph, retargetLetter moves a survivor but
+    // leaves its hull (and cached mass/inertia) frozen at the CREATE size, so it
+    // collides as its old, too-large self and never settles.
+    const w = await settledWorld([atSlot(400, 300)]) // one ball collider, r=20
+    const L = w.letters[0]
+    const massBefore = L.mass
+    expect(L.body.numColliders()).toBe(1)
+
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 40 }]) // 2x radius
+    expect(L.body.numColliders()).toBe(1)
+    // A ball of 2x the radius has ~4x the area -> ~4x the mass at density 1; the
+    // cached mass the springs read must reflect it (it was frozen before).
+    expect(L.mass).toBeGreaterThan(massBefore * 3)
+    expect(L.mass).toBe(L.body.mass()) // cache is in sync with the body
+  })
+
+  it('replaces the WHOLE collider set (a 3-piece hull becomes 1)', async () => {
+    const w = await settledWorld([
+      {
+        colliders: [
+          { t: 'ball', x: 0, y: 0, r: 20 },
+          { t: 'ball', x: 12, y: 0, r: 14 },
+          { t: 'ball', x: -12, y: 0, r: 14 },
+        ],
+        hw: 20,
+        hh: 20,
+        slotX: 400,
+        slotY: 300,
+      },
+    ])
+    expect(w.letters[0].body.numColliders()).toBe(3)
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 30 }])
+    expect(w.letters[0].body.numColliders()).toBe(1) // old ones all removed
+  })
+
+  it('is a no-op on an empty hull (never strips a body to zero colliders)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    resizeLetterColliders(w, 0, [])
+    expect(w.letters[0].body.numColliders()).toBe(1)
   })
 })

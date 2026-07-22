@@ -2,6 +2,36 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.8.3 — 2026-07-22
+
+Stability fixes from a multi-agent audit.
+
+### Added
+- `resizeLetterColliders(state, index, colliders)` — rebuild a letter's physics
+  hull in place at a new size.
+
+### Fixed
+- **Survivor colliders on a size-changing morph.** A reused glyph was re-styled
+  and moved but its Rapier hull stayed frozen at the size it was created, so in
+  a differently-sized phrase survivors collided as their old, too-large selves,
+  shoved each other off their slots, and never settled — `settledFrames` never
+  crossed idle, so a self-driven host's ticker never stopped (mobile battery).
+  `<CelebrateBubbles>` now rebuilds each survivor's hull during the transition.
+- **Scrambled wordmark on resize after a morph.** After a word-to-word
+  transition the letter arrays are no longer in slot order, but the same-size
+  resize path re-homed by array index — reassembling the wordmark scrambled and
+  building each collider hull for the wrong glyph. A resize after a morph now
+  forces a clean rebuild (which re-deals in slot order) instead.
+- **Rejected Rapier init was cached forever.** A transient loader/WASM failure
+  left `ensureRapierInitialized` holding a rejected promise, wedging Rapier and
+  `setRapierLoader` for the life of the page. It now clears on failure so a
+  retry can re-init.
+- **Non-finite reset target.** The NaN-pose safety net reset a letter to its
+  slot without checking the slot itself was finite; a non-finite slot made it a
+  no-op that re-injected NaN forever. It now falls back to the world center.
+- `createWallCage`'s `WallCage.floor` JSDoc now warns that it is the same body
+  as `walls[1]` (removing both double-frees and panics the WASM).
+
 ## 0.8.2 — 2026-07-22
 
 ### Fixed
