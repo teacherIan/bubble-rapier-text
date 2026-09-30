@@ -19,6 +19,10 @@ unchanged apart from one added export, and the Rapier peer range widens rather t
   the end of the step. Entrance settle times, exit and cull timings are the same on 0.19.3 and
   0.21.0. A world made with `createPhysicsWorld({ lengthUnit: 1 })` in px space is now capped at
   400 px/s.
+- **Size.** The compat bundle the default loader imports before the first frame (the wasm, inlined)
+  is 1.69 MB raw / 0.63 MB gzipped on 0.19.3, 2.12 / 0.80 MB on 0.20.0 and 3.41 / 1.29 MB on 0.21.0.
+  0.21 adds soft bodies, and its npm builds enable the FEM solver; this library uses neither. A
+  size-sensitive host can stay on 0.19, which the peer range still accepts.
 - `stepCelebrate` ignores a `dt` that is not a positive, finite number (no time passes).
 - `addObstacle` with a non-finite pose parks the mirror, disabled, until `moveObstacle` gets a finite
   pose, which PLACES it rather than sweeping it there.
