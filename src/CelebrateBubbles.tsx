@@ -27,6 +27,7 @@ import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
 import { planClaims, type LetterView } from './transition'
 import { safeDestroyApp } from './lib/safeDestroyApp'
+import { safeFreeWorld } from './lib/safeFreeWorld'
 import { createObstacleSync } from './obstacleSync'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
@@ -84,18 +85,6 @@ interface RenderLetter {
   color: number // the palette colour this letter was dealt — refits re-style from THIS, not from
   //               text.style.fill (which a custom styleFor may have made a pattern, not a number)
   seq: number // the letter's monotonic deal order — lets styleFor vary per letter (pattern offsets)
-}
-
-// A world whose wasm panicked cannot be freed: the panic left its raw sets mid-borrow, and free()
-// throws "attempted to take ownership of Rust value while it was borrowed". Thrown from a React
-// cleanup, that takes out the host's error boundary on the way OUT — the page dies because the
-// user navigated away from a frozen toy. The world is being discarded either way; drop it.
-function safeFreeWorld(world: CelebrateWorld): void {
-  try {
-    world.world.free()
-  } catch (err) {
-    if (!world.dead) console.warn('[bubble-rapier-text] world.free() threw during teardown', err)
-  }
 }
 
 // `position` lets this be the whole-viewport sandbox (default 'fixed', e.g. /celebrate-text)

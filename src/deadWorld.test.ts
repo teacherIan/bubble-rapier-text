@@ -27,6 +27,7 @@ import {
   type Obstacle,
 } from './celebratePhysics'
 import { ensureRapierInitialized } from './lib/physics/rapierInit'
+import { safeFreeWorld } from './lib/safeFreeWorld'
 
 // A world whose wasm has panicked is marked `dead` by stepCelebrate and must never be touched
 // again: after the trap, the raw sets are left borrowed and every call into them throws. In the
@@ -125,5 +126,41 @@ describe('a dead world: public mutators are no-ops', () => {
     const { w } = await poisonedWorld()
     exitCelebrate(w)
     expect(w.exiting).toBe(false)
+  })
+})
+
+// The component frees its world in a React cleanup (unmount, <Activity> hide) and on a cancelled
+// build. A throw there reaches the host's error boundary, or with none, unmounts the host's root.
+describe('safeFreeWorld', () => {
+  const models: Model[] = ['double free', 'mid-step panic']
+  it.each(models)('never throws on a dead world, and says nothing (%s)', async (model) => {
+    const bare = await poisonedWorld(model)
+    expect(() => bare.w.world.free(), 'precondition: a bare free() throws on this world').toThrow()
+    const { w } = await poisonedWorld(model)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(() => safeFreeWorld(w)).not.toThrow()
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('frees a live world', async () => {
+    const w = await createCelebrateWorld([atSlot(400, 300)], 800, 600, 60, 20)
+    safeFreeWorld(w)
+    expect(() => w.letters[0].body.translation()).toThrow()
+  })
+
+  it('swallows a throw from a world that is not dead, and logs it', async () => {
+    const w = await createCelebrateWorld([atSlot(400, 300)], 800, 600, 60, 20)
+    safeFreeWorld(w)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(() => safeFreeWorld(w)).not.toThrow() // a second free throws inside Rapier
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

@@ -39,6 +39,7 @@ npm run typecheck  # tsc -b (strict, no emit)
 npm run lint       # eslint, zero-warning
 npm test           # vitest (pure geometry + a real Rapier world)
 npm run build:lib  # the published library bundle → dist/ (ESM + .d.ts)
+npm run check:browser  # headless-Chrome lifecycle checks against `npm run dev` (see the script's header)
 ```
 
 ---
