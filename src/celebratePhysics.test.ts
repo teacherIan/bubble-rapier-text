@@ -778,3 +778,42 @@ describe('non-finite input never poisons or strands a body', () => {
     removeObstacle(w, o)
   })
 })
+
+describe('a mirror without a finite pose', () => {
+  it('addObstacle with a non-finite pose parks the mirror; the first finite move PLACES it', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT)
+    const o = addObstacle(w, NaN, NaN, 40) // a foreign sim's first pose was garbage
+    stepCelebrate(w, DT, true)
+    moveObstacle(o, 400, 150) // first real pose: well clear of the letter at (400, 300)
+    stepCelebrate(w, DT, true)
+    expect(o.body.isEnabled()).toBe(true)
+    const q = o.body.translation()
+    expect(Math.hypot(q.x - 400, q.y - 150)).toBeLessThan(1)
+    // Placed, not swept there: nothing on the way was batted aside.
+    const L = w.letters[0].body.translation()
+    expect(Math.hypot(L.x - 400, L.y - 300)).toBeLessThan(5)
+    // …and from here it is an ordinary mirror: sweeping it down shoves the letter.
+    for (let i = 0; i < 60; i++) {
+      moveObstacle(o, 400, 150 + i * 5)
+      stepCelebrate(w, DT, true)
+    }
+    const after = w.letters[0].body.translation()
+    expect(Math.hypot(after.x - 400, after.y - 300)).toBeGreaterThan(30)
+    removeObstacle(w, o)
+  })
+
+  it("a mirror disabled by Rapier's NaN quarantine comes back on its next finite pose", async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const o = addObstacle(w, 200, 300, 40)
+    o.body.setEnabled(false) // what Rapier 0.20+ does to a body whose state went non-finite
+    moveObstacle(o, 210, 300)
+    stepCelebrate(w, DT, true)
+    expect(o.body.isEnabled()).toBe(true)
+    const q = o.body.translation()
+    expect(Math.hypot(q.x - 210, q.y - 300)).toBeLessThan(1)
+    removeObstacle(w, o)
+  })
+})

@@ -639,12 +639,16 @@ export interface ObstaclePose {
 
 /** Add a circular kinematic mirror at (x, y) with radius r — all px. Default collision groups,
  *  so it collides with every solid letter (and 'bonk' debris); letter-grade restitution.
- *  A non-finite radius becomes 1px. Creates a body, so it throws on a dead world — check
+ *  A non-finite radius becomes 1px. A non-finite pose parks the mirror, disabled, until
+ *  moveObstacle gets a finite one. Creates a body, so it throws on a dead world — check
  *  `state.dead` first. */
 export function addObstacle(state: CelebrateWorld, x: number, y: number, r: number): Obstacle {
   const radius = Number.isFinite(r) ? Math.max(1, r) : 1 // Math.max(1, NaN) is NaN
+  const posed = Number.isFinite(x) && Number.isFinite(y)
   const body = state.world.createRigidBody(
-    state.rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y),
+    state.rapier.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(posed ? x : 0, posed ? y : 0)
+      .setEnabled(posed),
   )
   const collider = state.world.createCollider(
     state.rapier.ColliderDesc.ball(radius).setRestitution(RESTITUTION),
@@ -655,11 +659,22 @@ export function addObstacle(state: CelebrateWorld, x: number, y: number, r: numb
 
 /** Re-state the mirror's pose for the next step. Radius updates in place (a breathing blob),
  *  skipping writes for sub-pixel changes. A non-finite pose or radius (a foreign sim that blew
- *  up for a frame) is ignored — the mirror holds, rather than handing NaN to the solver, which
- *  on Rapier 0.20+ disables the mirror for good (0.19 panics). Writes to the world and takes no
- *  world to check, so stop calling it once `state.dead`. */
+ *  up for a frame) is ignored — the mirror holds, rather than handing NaN to the solver (Rapier
+ *  0.20+ disables the body; 0.19 panics). A mirror that is parked or was disabled anyway is
+ *  placed at the next finite pose and switched back on. Writes to the world and takes no world
+ *  to check, so stop calling it once `state.dead`. */
 export function moveObstacle(o: Obstacle, x: number, y: number, r?: number): void {
-  if (Number.isFinite(x) && Number.isFinite(y)) o.body.setNextKinematicTranslation({ x, y })
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    if (o.body.isEnabled()) {
+      o.body.setNextKinematicTranslation({ x, y })
+    } else {
+      // Parked by addObstacle, or quarantined by Rapier 0.20+ (rolled back and disabled). PLACE
+      // it and switch it back on: a kinematic sweep from wherever it sat would bat every letter
+      // on the way aside.
+      o.body.setTranslation({ x, y }, true)
+      o.body.setEnabled(true)
+    }
+  }
   if (r !== undefined && Number.isFinite(r)) {
     const next = Math.max(1, r)
     if (Math.abs(next - o.r) > 0.5) {
