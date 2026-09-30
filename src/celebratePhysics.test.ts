@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import {
   createCelebrateWorld,
   stepCelebrate,
@@ -11,7 +11,11 @@ import {
   resizeWorld,
   removeWalls,
   startLetterDrag,
+  moveDrag,
   releaseDrag,
+  startBodyDrag,
+  moveBodyDrag,
+  endBodyDrag,
   addLetter,
   setWallGroups,
   addObstacle,
@@ -548,5 +552,229 @@ describe('re-caging after removeWalls', () => {
     armEnclosureNow(w) // must REBUILD, not no-op on the stale wallsAdded flag
     expect(w.walls.length).toBeGreaterThan(0)
     expect(w.floorBody).not.toBeNull()
+  })
+})
+
+/** Pin a letter far from its slot until the untangle ghosts it (the glide-home state). */
+function ghostByWedging(w: CelebrateWorld, i: number): void {
+  const L = w.letters[i]
+  for (let k = 0; k < 60 && !L.ghost; k++) {
+    L.body.setTranslation({ x: 100, y: 100 }, true)
+    L.body.setLinvel({ x: 0, y: 0 }, true)
+    L.body.setAngvel(0, true)
+    stepCelebrate(w, DT)
+  }
+  expect(L.ghost, 'precondition: the letter is gliding home as a ghost').toBe(true)
+}
+
+describe("resizeLetterColliders keeps the letter's collision mode", () => {
+  it('a ghost gliding home keeps its new colliders disabled', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    ghostByWedging(w, 0)
+    const L = w.letters[0]
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 30 }])
+    // Solid colliders on a DRIVEN body shove every neighbour it is teleported through.
+    for (let i = 0; i < L.body.numColliders(); i++) expect(L.body.collider(i).isEnabled()).toBe(false)
+    expect(L.ghost).toBe(true)
+    // The cached mass is the new hull's, read before the colliders were disabled.
+    expect(L.mass).toBeGreaterThan(0)
+  })
+
+  it('a pass-through flung letter keeps colliding with nothing', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    scatterLetter(w, 0, { solid: false })
+    const L = w.letters[0]
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 30 }])
+    for (let i = 0; i < L.body.numColliders(); i++) {
+      expect(L.body.collider(i).isEnabled()).toBe(true) // keeps its mass, so gravity still carries it off
+      expect(L.body.collider(i).collisionGroups()).toBe(0)
+    }
+  })
+})
+
+describe('setWallGroups(null)', () => {
+  it('restores the default groups on the cage that is up now, not only on the next rebuild', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    setWallGroups(w, 0x00020001)
+    setWallGroups(w, null)
+    for (const wall of w.walls) {
+      for (let i = 0; i < wall.numColliders(); i++) expect(wall.collider(i).collisionGroups() >>> 0).toBe(0xffffffff)
+    }
+  })
+})
+
+describe('exit', () => {
+  it('a letter cannot be grabbed mid-exit (the anchor would hang it in the air)', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    exitCelebrate(w)
+    startLetterDrag(w, 0, 0, 0, 400, 300)
+    expect(w.drag).toBeNull()
+    for (let i = 0; i < 240; i++) stepCelebrate(w, DT)
+    expect(w.letters[0].body.translation().y).toBeGreaterThan(w.h)
+  })
+
+  it('armEnclosureNow cannot re-cage an exit that began before the cage went up', async () => {
+    // The component path: `exiting` already true when the async build finishes, with reduced
+    // motion — exitCelebrate runs on a cage-less world, then armEnclosureNow.
+    const w = await settledWorld([atSlot(400, 300)])
+    exitCelebrate(w)
+    armEnclosureNow(w)
+    expect(w.floorBody).toBeNull()
+    for (let i = 0; i < 240; i++) stepCelebrate(w, DT)
+    expect(w.letters[0].body.translation().y, 'the letters must still fall out').toBeGreaterThan(w.h)
+  })
+})
+
+describe('dragging your own bodies (startBodyDrag / moveBodyDrag)', () => {
+  it('moveBodyDrag actually moves the anchor, so the prop follows the cursor', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const prop = w.world.createRigidBody(w.rapier.RigidBodyDesc.dynamic().setTranslation(650, 150).setCanSleep(false))
+    w.world.createCollider(w.rapier.ColliderDesc.ball(15), prop)
+    const m = startBodyDrag(w, prop, 0, 0, 650, 150)
+    moveBodyDrag(m, 150, 450)
+    for (let i = 0; i < 90; i++) stepCelebrate(w, DT, true)
+    const p = prop.translation()
+    expect(Math.hypot(p.x - 150, p.y - 450)).toBeLessThan(15)
+    endBodyDrag(w, m)
+  })
+})
+
+describe('non-finite input never poisons or strands a body', () => {
+  it('a non-finite slot is replaced once (world centre), not re-injected every frame', async () => {
+    const w = await settledWorld([atSlot(400, 300), atSlot(300, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      retargetLetter(w, 0, NaN, NaN)
+      for (let i = 0; i < 120; i++) stepCelebrate(w, DT)
+      expect(w.dead).toBe(false)
+      expect(L.body.isEnabled()).toBe(true)
+      expect(Number.isFinite(L.tx) && Number.isFinite(L.ty)).toBe(true)
+      expect(err, 'one report, not one per frame').toHaveBeenCalledTimes(1)
+    } finally {
+      err.mockRestore()
+    }
+    // …and it is still an ordinary letter.
+    retargetLetter(w, 0, 600, 300)
+    for (let i = 0; i < 300; i++) stepCelebrate(w, DT)
+    const p = L.body.translation()
+    expect(Math.hypot(p.x - 600, p.y - 300)).toBeLessThan(w.stuckDist)
+  })
+
+  it("a letter body disabled by Rapier's NaN quarantine is re-enabled and put back on its slot", async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    // Rapier 0.20+ answers a body whose state goes non-finite mid-step by rolling it back and
+    // DISABLING it. A disabled letter never moves again: not by the springs, not by gravity.
+    L.body.setEnabled(false)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      stepCelebrate(w, DT)
+      expect(L.body.isEnabled()).toBe(true)
+      expect(err, 'the recovery is reported, not silent').toHaveBeenCalled()
+    } finally {
+      err.mockRestore()
+    }
+    retargetLetter(w, 0, 600, 300)
+    for (let i = 0; i < 300; i++) stepCelebrate(w, DT)
+    const p = L.body.translation()
+    expect(Math.hypot(p.x - 600, p.y - 300)).toBeLessThan(w.stuckDist)
+  })
+
+  it('the real quarantine path: a NaN velocity reaches the solver and the letter recovers', async (ctx) => {
+    const w = await settledWorld([atSlot(400, 300)])
+    const [maj, min] = w.rapier.version().split('.').map(Number)
+    if (maj === 0 && min < 20) ctx.skip() // 0.19 panics here instead (the dead-world path)
+    armEnclosureNow(w)
+    const L = w.letters[0]
+    L.body.setLinvel({ x: NaN, y: 0 }, true)
+    w.world.step() // straight into the solver, past the pre-step sentinel
+    expect(L.body.isEnabled(), 'precondition: Rapier quarantined the body').toBe(false)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (let i = 0; i < 5; i++) stepCelebrate(w, DT)
+    } finally {
+      err.mockRestore()
+    }
+    expect(L.body.isEnabled()).toBe(true)
+    retargetLetter(w, 0, 600, 300)
+    for (let i = 0; i < 300; i++) stepCelebrate(w, DT)
+    const p = L.body.translation()
+    expect(Math.hypot(p.x - 600, p.y - 300)).toBeLessThan(w.stuckDist)
+  })
+
+  it('stepCelebrate ignores a dt that is not a positive finite number', async () => {
+    for (const bad of [NaN, Infinity, 0, -1 / 60]) {
+      const w = await settledWorld([atSlot(400, 300)])
+      armEnclosureNow(w)
+      const L = w.letters[0]
+      const before = L.body.translation()
+      stepCelebrate(w, bad)
+      expect(L.body.isEnabled(), `dt=${bad}`).toBe(true)
+      const p = L.body.translation()
+      expect(Math.hypot(p.x - before.x, p.y - before.y), `dt=${bad}`).toBeLessThan(1)
+    }
+  })
+
+  it('moveDrag ignores a non-finite cursor; the drag keeps working', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    startLetterDrag(w, 0, 0, 0, 400, 300)
+    moveDrag(w, NaN, 300)
+    for (let i = 0; i < 5; i++) stepCelebrate(w, DT)
+    moveDrag(w, 250, 300)
+    for (let i = 0; i < 90; i++) stepCelebrate(w, DT)
+    expect(w.drag!.cursorBody.isEnabled()).toBe(true)
+    const p = w.letters[0].body.translation()
+    expect(Math.hypot(p.x - 250, p.y - 300)).toBeLessThan(15)
+    releaseDrag(w)
+  })
+
+  it('moveBodyDrag ignores a non-finite cursor', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    const prop = w.world.createRigidBody(w.rapier.RigidBodyDesc.dynamic().setTranslation(650, 150).setCanSleep(false))
+    w.world.createCollider(w.rapier.ColliderDesc.ball(15), prop)
+    const m = startBodyDrag(w, prop, 0, 0, 650, 150)
+    moveBodyDrag(m, Infinity, 150)
+    expect(m.cursorX).toBe(650)
+    for (let i = 0; i < 5; i++) stepCelebrate(w, DT, true)
+    expect(m.cursorBody.isEnabled()).toBe(true)
+    endBodyDrag(w, m)
+  })
+
+  it('moveObstacle ignores a non-finite pose; the mirror keeps colliding', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    armEnclosureNow(w)
+    for (let i = 0; i < 30; i++) stepCelebrate(w, DT)
+    const before = w.letters[0].body.translation()
+    const o = addObstacle(w, 200, 300, 60)
+    moveObstacle(o, NaN, NaN, NaN) // the foreign sim blew up for a frame
+    stepCelebrate(w, DT, true)
+    expect(o.body.isEnabled()).toBe(true)
+    expect(o.r).toBe(60)
+    for (let i = 0; i < 90; i++) {
+      moveObstacle(o, 200 + i * 4, 300)
+      stepCelebrate(w, DT, true)
+    }
+    const during = w.letters[0].body.translation()
+    expect(Math.hypot(during.x - before.x, during.y - before.y)).toBeGreaterThan(30)
+    removeObstacle(w, o)
+  })
+
+  it('addObstacle clamps a non-finite radius', async () => {
+    const w = await settledWorld([atSlot(400, 300)])
+    const o = addObstacle(w, 100, 100, NaN)
+    expect(o.r).toBe(1)
+    stepCelebrate(w, DT)
+    expect(o.collider.isEnabled()).toBe(true)
+    removeObstacle(w, o)
   })
 })

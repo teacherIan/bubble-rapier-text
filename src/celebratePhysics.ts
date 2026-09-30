@@ -157,11 +157,13 @@ function addEnclosure(rapier: typeof RAPIER, world: RAPIER.World, w: number, h: 
   return createWallCage(rapier, world, w, h, { thickness: WALL_T, sideExtent: 'full' })
 }
 
+const DEFAULT_GROUPS = 0xffffffff // Rapier's default: member of every group, collides with every group
+
 function setLetterSolid(L: LetterBody, solid: boolean): void {
   for (let i = 0; i < L.body.numColliders(); i++) {
     const c = L.body.collider(i)
     c.setEnabled(solid)
-    if (solid) c.setCollisionGroups(0xffffffff) // restore default (a scatter may have set it to pass-through)
+    if (solid) c.setCollisionGroups(DEFAULT_GROUPS) // restore default (a scatter may have set it to pass-through)
   }
   L.ghost = !solid
 }
@@ -333,6 +335,7 @@ export function resizeWorld(state: CelebrateWorld, w: number, h: number, stuckDi
 
 /** Remove the entire enclosure so the world is open on all sides (for a re-layout transition). */
 export function removeWalls(state: CelebrateWorld): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   for (const wall of state.walls) state.world.removeRigidBody(wall)
   state.walls = []
   state.floorBody = null
@@ -370,8 +373,11 @@ export function retargetLetter(state: CelebrateWorld, index: number, x: number, 
  * off their slots, and the slot springs never settle — `settledFrames` never
  * crosses idle, so a self-driven host's ticker never stops (mobile battery).
  * `colliders` is the new-size px hull, the same shape createLetterBody consumes.
+ * The letter keeps its collision mode: a ghost gliding home stays collision-free and a
+ * pass-through flung letter still hits nothing.
  */
 export function resizeLetterColliders(state: CelebrateWorld, index: number, colliders: PxShape[]): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
   const L = state.letters[index]
   if (!L || colliders.length === 0) return
   const { rapier, world } = state
@@ -386,9 +392,17 @@ export function resizeLetterColliders(state: CelebrateWorld, index: number, coll
     const desc = colliderDescFor(rapier, c)
     if (desc) world.createCollider(desc.setTranslation(c.x, c.y).setRotation(shapeRot(c)).setRestitution(RESTITUTION).setDensity(1), body)
   }
-  // The springs read these cached values; a collider change doesn't refresh them.
+  // The springs read these cached values; a collider change doesn't refresh them. Read them
+  // while the new colliders are still enabled — a ghost's body reports zero mass.
   L.mass = body.mass()
   L.inertia = body.principalInertia()
+  // The new colliders are created solid; put the letter back in the mode it was in. A driven
+  // ghost with solid colliders shoves every neighbour it is teleported through, and a
+  // pass-through fling would start bonking the forming word.
+  if (L.ghost) {
+    if (L.discarded) setLetterPassthrough(L)
+    else setLetterSolid(L, false)
+  }
 }
 
 /**
@@ -516,18 +530,24 @@ function detachMouseJoint(state: CelebrateWorld, m: MouseJoint): void {
   state.world.removeRigidBody(m.cursorBody)
 }
 
-/** Grab a letter at a point in its local frame; it then hinges/swings from there as you drag. */
+/** Grab a letter at a point in its local frame; it then hinges/swings from there as you drag.
+ *  A no-op during the exit: the exiting step never moves the anchor, so a grabbed letter would
+ *  hang in the air instead of falling out. */
 export function startLetterDrag(state: CelebrateWorld, index: number, grabLocalX: number, grabLocalY: number, cursorX: number, cursorY: number): void {
   if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
+  if (state.exiting) return
   const L = state.letters[index]
   if (!L) return
   if (state.drag) detachMouseJoint(state, state.drag) // clear any prior drag
   state.drag = { index, ...attachMouseJoint(state, L.body, grabLocalX, grabLocalY, cursorX, cursorY) }
 }
 
-/** Update the cursor anchor (on pointer move). */
+/** Update the cursor anchor (on pointer move). A non-finite cursor is ignored — the anchor holds
+ *  its last position rather than handing NaN to the solver (Rapier 0.20+ would disable the anchor
+ *  for good; 0.19 panics). */
 export function moveDrag(state: CelebrateWorld, cursorX: number, cursorY: number): void {
   if (state.dead) return  // WASM is poisoned — do not touch its bodies (see stepCelebrate)
+  if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY)) return
   if (state.drag) {
     state.drag.cursorX = cursorX
     state.drag.cursorY = cursorY
@@ -553,7 +573,8 @@ export function releaseDrag(state: CelebrateWorld): void {
 // pressed against it would otherwise be read as wedged, ghosted, and driven home THROUGH it, then
 // ejected violently when they re-solidify where the prop sits.
 
-/** Grab any body in the world at a point in its local frame; it hinges/swings from there. */
+/** Grab any body in the world at a point in its local frame; it hinges/swings from there.
+ *  Creates bodies, so it throws on a dead world — check `state.dead` first. */
 export function startBodyDrag(
   state: CelebrateWorld,
   body: RAPIER.RigidBody,
@@ -565,14 +586,22 @@ export function startBodyDrag(
   return attachMouseJoint(state, body, grabLocalX, grabLocalY, cursorX, cursorY)
 }
 
-/** Steer a prop drag's cursor anchor. Feed the handle to stepCelebrate's caller each frame. */
+/**
+ * Steer a prop drag's cursor anchor; the prop follows on the next step. stepCelebrate only steers
+ * the LETTER drag (`state.drag`) — it knows nothing about your handles — so this sets the anchor's
+ * kinematic target itself. A non-finite cursor is ignored (the anchor holds). It writes to the
+ * world and takes no world to check, so stop calling it once `state.dead`.
+ */
 export function moveBodyDrag(m: MouseJoint, cursorX: number, cursorY: number): void {
+  if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY)) return
   m.cursorX = cursorX
   m.cursorY = cursorY
+  m.cursorBody.setNextKinematicTranslation({ x: cursorX, y: cursorY })
 }
 
 /** Release a prop drag, removing its joint + kinematic anchor. */
 export function endBodyDrag(state: CelebrateWorld, m: MouseJoint): void {
+  if (state.dead) return  // WASM is poisoned — the joint and anchor die with the world
   detachMouseJoint(state, m)
 }
 
@@ -609,23 +638,29 @@ export interface ObstaclePose {
 }
 
 /** Add a circular kinematic mirror at (x, y) with radius r — all px. Default collision groups,
- *  so it collides with every solid letter (and 'bonk' debris); letter-grade restitution. */
+ *  so it collides with every solid letter (and 'bonk' debris); letter-grade restitution.
+ *  A non-finite radius becomes 1px. Creates a body, so it throws on a dead world — check
+ *  `state.dead` first. */
 export function addObstacle(state: CelebrateWorld, x: number, y: number, r: number): Obstacle {
+  const radius = Number.isFinite(r) ? Math.max(1, r) : 1 // Math.max(1, NaN) is NaN
   const body = state.world.createRigidBody(
     state.rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y),
   )
   const collider = state.world.createCollider(
-    state.rapier.ColliderDesc.ball(Math.max(1, r)).setRestitution(RESTITUTION),
+    state.rapier.ColliderDesc.ball(radius).setRestitution(RESTITUTION),
     body,
   )
-  return { body, collider, r: Math.max(1, r) }
+  return { body, collider, r: radius }
 }
 
 /** Re-state the mirror's pose for the next step. Radius updates in place (a breathing blob),
- *  skipping writes for sub-pixel changes. */
+ *  skipping writes for sub-pixel changes. A non-finite pose or radius (a foreign sim that blew
+ *  up for a frame) is ignored — the mirror holds, rather than handing NaN to the solver, which
+ *  on Rapier 0.20+ disables the mirror for good (0.19 panics). Writes to the world and takes no
+ *  world to check, so stop calling it once `state.dead`. */
 export function moveObstacle(o: Obstacle, x: number, y: number, r?: number): void {
-  o.body.setNextKinematicTranslation({ x, y })
-  if (r !== undefined) {
+  if (Number.isFinite(x) && Number.isFinite(y)) o.body.setNextKinematicTranslation({ x, y })
+  if (r !== undefined && Number.isFinite(r)) {
     const next = Math.max(1, r)
     if (Math.abs(next - o.r) > 0.5) {
       o.collider.setRadius(next)
@@ -636,6 +671,7 @@ export function moveObstacle(o: Obstacle, x: number, y: number, r?: number): voi
 
 /** Remove a mirror (its collider goes with the body). */
 export function removeObstacle(state: CelebrateWorld, o: Obstacle): void {
+  if (state.dead) return  // WASM is poisoned — the mirror dies with the world
   state.world.removeRigidBody(o.body)
 }
 
@@ -646,11 +682,13 @@ export function removeObstacle(state: CelebrateWorld, o: Obstacle): void {
  * restored layout — there is no rain to contain, so the cage should be up from the start rather
  * than WALL_DELAY_MS later.
  *
- * No-op once the cage has been added OR removed (see removeWalls); this is not a way to restore a
- * removed cage mid-transition.
+ * No-op while the cage is up. After removeWalls it rebuilds the cage. No-op during the exit: a
+ * cage built after exitCelebrate would come with a floor, and the letters would land instead of
+ * leaving (the component reaches this when `exiting` is already true as the build finishes and
+ * reduced motion puts the cage up).
  */
 export function armEnclosureNow(state: CelebrateWorld): void {
-  if (state.dead) return
+  if (state.dead || state.exiting) return
   // Guard on whether the cage is actually PRESENT, not the `wallsAdded` flag —
   // `removeWalls` (used during a morph) leaves the flag true but the walls
   // empty, and a consumer must be able to bring the cage back afterward.
@@ -666,18 +704,23 @@ export function armEnclosureNow(state: CelebrateWorld): void {
  * Set the collision groups stamped on every cage collider — now and on every rebuild (the cage is
  * recreated on resize and after transitions). The use case is a host body that must pass THROUGH
  * the walls while the letters stay caged (little_striders' cheetah): give walls a membership/filter
- * that excludes the host body's group. `null` restores Rapier's default (collide with everything).
+ * that excludes the host body's group. `null` restores Rapier's default (collide with everything),
+ * on the cage that is up now as well as on later rebuilds.
  */
 export function setWallGroups(state: CelebrateWorld, groups: number | null): void {
   state.wallGroups = groups
-  applyWallGroups(state)
+  stampWallGroups(state, groups ?? DEFAULT_GROUPS)
 }
 
+// After a cage rebuild. A fresh cage already has the default groups, so null has nothing to stamp.
 function applyWallGroups(state: CelebrateWorld): void {
-  if (state.wallGroups === null) return
+  if (state.wallGroups !== null) stampWallGroups(state, state.wallGroups)
+}
+
+function stampWallGroups(state: CelebrateWorld, groups: number): void {
   const stamp = (body: RAPIER.RigidBody | null) => {
     if (!body) return
-    for (let i = 0; i < body.numColliders(); i++) body.collider(i).setCollisionGroups(state.wallGroups!)
+    for (let i = 0; i < body.numColliders(); i++) body.collider(i).setCollisionGroups(groups)
   }
   stamp(state.floorBody)
   for (const w of state.walls) stamp(w)
@@ -690,7 +733,9 @@ function applyWallGroups(state: CelebrateWorld): void {
  * way down. A small downward kick + wake makes the drop decisive (settled letters may sleep).
  */
 export function exitCelebrate(state: CelebrateWorld): void {
-  if (state.exiting) return
+  // A dead world stays frozen where it is: touching it would throw — in the component, from inside
+  // the React effect that watches `exiting`.
+  if (state.dead || state.exiting) return
   state.exiting = true
   releaseDrag(state) // detach any in-flight drag joint + cursor anchor before the world tears down
   // Open the bottom. If the entrance hasn't placed the walls yet, mark them added so the
@@ -726,9 +771,13 @@ export function exitCelebrate(state: CelebrateWorld): void {
  * one of its own bodies over the letters (see startBodyDrag). While busy, the untangle stands down
  * so pressed-against letters aren't ghosted and driven home through the obstacle. It is a parameter
  * rather than a field on the world so it can never go stale: the host asserts it fresh each frame.
+ *
+ * A `dt` that is not a positive, finite number is ignored: no time passes, and NaN or Infinity
+ * would otherwise reach every body through the solver.
  */
 export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): void {
   if (state.dead) return
+  if (!(dt > 0 && dt < Infinity)) return // also false for NaN
   try {
     stepCelebrateInner(state, dt, busy)
   } catch (err) {
@@ -755,23 +804,32 @@ export function stepCelebrate(state: CelebrateWorld, dt: number, busy = false): 
 function stepCelebrateInner(state: CelebrateWorld, dt: number, busy = false): void {
   const { rapier, world, letters } = state
 
-  // Non-finite sentinel: a NaN/Infinity pose fed to the solver is how wasm panics start. Catch the
-  // injection the frame it happens — name the letter, reset it to its slot at rest — so a math bug
-  // upstream degrades to one visible snap instead of a dead world.
+  // Non-finite sentinel: a NaN/Infinity fed to the solver is how wasm panics start (0.19) — or, on
+  // Rapier 0.20+, how a body gets quarantined. Catch it the frame it happens — name the letter,
+  // reset it to its slot at rest — so a math bug upstream degrades to one visible snap instead of a
+  // dead world or a frozen letter.
   for (let i = 0; i < letters.length; i++) {
     const L = letters[i]
+    // The slot first. A non-finite slot puts NaN into this frame's spring impulse, and every
+    // frame's after it, so resetting the pose alone never recovers. Home the letter to the world
+    // centre instead; the slot is then finite, so this reports once.
+    if (!Number.isFinite(L.tx) || !Number.isFinite(L.ty)) {
+      console.error('[bubble-rapier-text] non-finite slot; homing letter to the world centre', { i, tx: L.tx, ty: L.ty })
+      if (!Number.isFinite(L.tx)) L.tx = Number.isFinite(state.w) ? state.w / 2 : 0
+      if (!Number.isFinite(L.ty)) L.ty = Number.isFinite(state.h) ? state.h / 2 : 0
+    }
+    // Rapier 0.20+ answers a body whose state went non-finite INSIDE a step by rolling it back and
+    // DISABLING it. This library never disables a letter body, so a disabled one was quarantined —
+    // and left disabled it never moves again: no springs, no gravity, nothing to collide with.
+    const quarantined = !L.body.isEnabled()
     const p = L.body.translation()
     const v = L.body.linvel()
     const r = L.body.rotation()
     const av = L.body.angvel()
-    if (!Number.isFinite(p.x + p.y + v.x + v.y + r + av)) {
-      console.error('[bubble-rapier-text] non-finite pose; resetting letter to slot', { i, x: p.x, y: p.y, vx: v.x, vy: v.y, rot: r, angvel: av, tx: L.tx, ty: L.ty, ghost: L.ghost, discarded: L.discarded })
-      // Guard the reset target too: a non-finite slot (tx/ty) would make this
-      // safety net a no-op that re-injects NaN forever. Fall back to the world
-      // center so a bad slot recovers to something visible.
-      const rx = Number.isFinite(L.tx) ? L.tx : state.w / 2
-      const ry = Number.isFinite(L.ty) ? L.ty : state.h / 2
-      L.body.setTranslation({ x: rx, y: ry }, true)
+    if (quarantined || !Number.isFinite(p.x + p.y + v.x + v.y + r + av)) {
+      console.error('[bubble-rapier-text] non-finite letter state; resetting letter to slot', { i, quarantined, x: p.x, y: p.y, vx: v.x, vy: v.y, rot: r, angvel: av, tx: L.tx, ty: L.ty, ghost: L.ghost, discarded: L.discarded })
+      if (quarantined) L.body.setEnabled(true)
+      L.body.setTranslation({ x: L.tx, y: L.ty }, true)
       L.body.setRotation(0, true)
       L.body.setLinvel({ x: 0, y: 0 }, true)
       L.body.setAngvel(0, true)
