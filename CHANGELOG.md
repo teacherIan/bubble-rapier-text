@@ -2,6 +2,66 @@
 
 All notable changes to `bubble-rapier-text`. Pre-1.0, so breaking changes ship in MINOR versions.
 
+## 0.11.0 — 2026-09-29
+
+Rapier 0.21, plus a once-over for lifecycle and robustness. Nothing breaking: the public API is
+unchanged apart from one added export, and the Rapier peer range widens rather than moves.
+
+### Changed
+- **`@dimforge/rapier2d-compat` peer range is now `^0.19.0 || ^0.20.0 || ^0.21.0`** (was `^0.19.0`).
+  The library is developed against 0.21.0; the test suite passes on 0.19.3, 0.20.0 and 0.21.0, so a
+  host pinned to 0.19 can take this version without bumping its own Rapier.
+- On Rapier 0.20+ the `using deprecated parameters for the initialization function` console warning
+  (see 0.4.1) is gone. Rapier fixed its compat shim upstream; `init()` still takes no arguments.
+- What Rapier 0.20/0.21 changed underneath, checked against this library: speed caps (400·lengthUnit
+  px/s — 40000 px/s at the default lengthUnit 100 — and about 45° of rotation per step), rewritten
+  sleeping, CCD against fixed colliders by default, new contact defaults, and restitution applied at
+  the end of the step. Entrance settle times, exit and cull timings are the same on 0.19.3 and
+  0.21.0. A world made with `createPhysicsWorld({ lengthUnit: 1 })` in px space is now capped at
+  400 px/s.
+- `stepCelebrate` ignores a `dt` that is not a positive, finite number (no time passes).
+- `addObstacle` with a non-finite pose parks the mirror, disabled, until `moveObstacle` gets a finite
+  pose, which PLACES it rather than sweeping it there.
+
+### Added
+- **`setWallGroups` is exported from the package entry.** 0.8.0 listed it as added, but the entry
+  never re-exported it, so no consumer could import it.
+
+### Fixed
+- **A dead world (a caught wasm panic) no longer takes the host page down.**
+  - Unmounting `<CelebrateBubbles>` threw from its cleanup (`world.free()` on a panicked world
+    throws). Without an error boundary the host's React root unmounted: navigating away from a
+    frozen toy killed the page.
+  - A `phrase`/`layout` change, a tap, and a resize each read or rebuilt bodies in the poisoned wasm.
+    The first threw inside the host's effect (page gone); the resize read `world.letters[-1]`.
+  - `exitCelebrate`, `removeWalls`, `resizeLetterColliders`, `removeObstacle`, `endBodyDrag` and
+    `setWallGroups` still touched the poisoned instance (0.8.4 guarded the rest). A host flipping
+    `exiting` after the world died hit this from inside an effect.
+- **Non-finite input recovers instead of freezing a body.** Rapier 0.20+ quarantines a body whose
+  state goes non-finite (rolls it back and disables it for good), where 0.19 panicked.
+  - The pre-step sentinel re-enables a quarantined letter and resets it to its slot.
+  - A non-finite slot is replaced by the world centre, once. Before, the spring re-injected NaN every
+    frame: the world died on 0.19, and on 0.21 the letter froze and logged an error every frame.
+  - `moveDrag`, `moveBodyDrag` and `moveObstacle` ignore non-finite input (the anchor or mirror
+    holds); `addObstacle` clamps a non-finite radius (`Math.max(1, NaN)` is NaN).
+- **`moveBodyDrag` never moved anything.** `stepCelebrate` steers only the letter drag, so a prop
+  grabbed with `startBodyDrag` hung from an anchor that stayed where it was grabbed. `moveBodyDrag`
+  now sets the anchor's kinematic target.
+- **React 19.2 `<Activity>`:** re-showing a hidden `<CelebrateBubbles>` threw. The `play` effect
+  called the destroyed build's `wake()` before the new build published (`app.ticker` is null after
+  destroy).
+- **`<GlyphHullLab>` / `<GlyphHullEditor>` unmounted during PIXI init blanked the host page.** They
+  destroyed a half-built Application (PIXI 8 throws). They now adopt the app only once `init()`
+  resolves, and all three components share `safeDestroyApp`.
+- **Exit:** a letter can no longer be grabbed mid-exit (the exiting step never moves the anchor, so it
+  hung in the air), and `armEnclosureNow` no longer re-cages an exit that began before the cage went
+  up (the component path: `exiting` already true when the build finishes, with reduced motion; the
+  letters landed instead of leaving).
+- `resizeLetterColliders` rebuilt a ghost's or a pass-through letter's colliders solid; the letter now
+  keeps its collision mode.
+- `setWallGroups(null)` only took effect on the next cage rebuild; it now restores the default groups
+  on the live cage.
+
 ## 0.10.0 — 2026-07-22
 
 Consumer-facing hull tooling: a project can now point `GlyphHullEditor` / `GlyphHullLab` at its
