@@ -125,6 +125,7 @@ import {
   removeWalls, retargetLetter, scatterLetter, addLetter,
   removeLetter, cullDiscarded, // collect flung letters once they're off-screen
   resizeWorld, // resize + rebuild the enclosure on a viewport / device-rotation change
+  setWallGroups, // collision groups for the cage, e.g. a host body that passes through the walls
   // drag: a revolute "mouse joint" — the grabbed point hinges to the cursor, so a letter
   // picked up by its top edge dangles and swings
   startLetterDrag, moveDrag, releaseDrag,
