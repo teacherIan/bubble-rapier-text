@@ -23,7 +23,9 @@ export interface PhysicsWorld {
  * ~100 m giant and runs its internal thresholds (allowed linear error, contact
  * prediction, sleeping/CCD cutoffs) ~100x too tight — the documented #1 Rapier
  * mistake, which surfaces as perpetual sub-pixel contact micro-jitter. Pass
- * `lengthUnit: 1` to opt a px-space world out (e.g. to preserve existing feel).
+ * `lengthUnit: 1` to opt a px-space world out (e.g. to preserve existing feel) — but
+ * note that Rapier 0.20+ also caps every body's linear speed at 400·lengthUnit per
+ * second, so a px-space world at lengthUnit 1 can move nothing faster than 400 px/s.
  */
 export async function createPhysicsWorld(
   gravity: { x: number; y: number },

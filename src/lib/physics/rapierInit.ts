@@ -15,7 +15,14 @@ import type RAPIER from '@dimforge/rapier2d-compat'
 /** Resolves to an initialized Rapier namespace. */
 export type RapierLoader = () => Promise<typeof RAPIER>
 
-/** Default: the compat build, whose WASM is inlined — no bundler or server configuration. */
+/**
+ * Default: the compat build, whose WASM is inlined — no bundler or server configuration.
+ *
+ * `init()` takes no arguments on every supported version; the compat build hands its inlined
+ * module to wasm-bindgen itself. 0.19's shim did that with wasm-bindgen's deprecated calling
+ * convention and logged "using deprecated parameters for the initialization function" once per
+ * page. Rapier 0.20 fixed it upstream, so on 0.20+ the warning is gone with no change here.
+ */
 const compatLoader: RapierLoader = async () => {
   const R = await import('@dimforge/rapier2d-compat')
   await R.init()

@@ -67,7 +67,8 @@ export function Splash() {
 ```
 
 **Peer dependencies:** `react`, `react-dom` (18 or 19), `pixi.js` (8), and
-`@dimforge/rapier2d-compat` (0.19). npm 7+ installs peers automatically, so there is nothing extra
+`@dimforge/rapier2d-compat` (0.19, 0.20 or 0.21 — developed against 0.21, and the test suite passes
+on all three). npm 7+ installs peers automatically, so there is nothing extra
 to do — they are peers rather than dependencies because their objects cross this package's API
 surface (`CelebrateWorld.rapier` is public), and a second copy in the graph means duplicate WebGL
 registration and `instanceof` checks that fail across the boundary.

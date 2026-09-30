@@ -88,7 +88,7 @@ export interface LetterBody {
   ty: number
   ghost: boolean // true while gliding home with collisions disabled
   discarded: boolean // true once flung off in a transition — no springs, just flies under gravity
-  mass: number // cached: constant for a fixed collider set (verified: disabling colliders doesn't change it)
+  mass: number // cached while the colliders are ENABLED: body.mass() reads 0 once a ghost's colliders are disabled
   inertia: number // cached principal moment of inertia — avoids per-frame WASM calls in the springs
   wrongFrames: number // consecutive frames out-of-place AND parked (wedged) — the snappy free trigger
   wrongTotal: number // consecutive frames out-of-place at ANY speed — the watchdog free trigger
@@ -184,7 +184,7 @@ function freeLetter(L: LetterBody): void {
 // Ghost a FLUNG (discarded) letter by making it pass through everything via collision GROUPS, WITHOUT
 // disabling its collider. Disabling the collider zeroes the body's effective mass — and a zero-mass
 // dynamic body gets NO gravity and its velocity decays to zero, so the letter freezes on-screen instead
-// of flying off (verified against Rapier 0.19). Keeping the collider enabled (filtered to hit nothing)
+// of flying off (verified against Rapier 0.19 and 0.21). Keeping the collider enabled (filtered to hit nothing)
 // retains the mass, so gravity + the scatter velocity carry it cleanly off any edge to be culled.
 function setLetterPassthrough(L: LetterBody): void {
   for (let i = 0; i < L.body.numColliders(); i++) {
@@ -252,8 +252,11 @@ function createLetterBody(rapier: typeof RAPIER, world: RAPIER.World, spec: Lett
       .setLinearDamping(LINEAR_DAMPING)
       .setAngularDamping(ANGULAR_DAMPING)
       .setCanSleep(false) // these bodies are perpetually servoed to a slot — a sleeping wrong letter
-      // (Rapier sleeps below ~0.4·lengthUnit = 40px/s) would never be re-homed; never let them sleep.
-      .setCcdEnabled(true), // small fast glyphs were tunneling through the floor on entry
+      // would never be re-homed; never let them sleep. (Rapier's sleep threshold scales with
+      // lengthUnit, and 0.20 rewrote it — displacement-based, after 0.5s — so don't lean on it.)
+      .setCcdEnabled(true), // small fast glyphs were tunneling through the floor on entry. Rapier 0.20+
+      // sweeps fast bodies against FIXED colliders by default; the flag also makes a letter a
+      // "bullet" that sweeps against other letters and kinematic mirrors.
   )
   const pieces = spec.colliders.length
     ? spec.colliders
