@@ -3,6 +3,7 @@ import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
 import { GLYPH_HULLS, EDITABLE_GLYPHS, scaleHull, strokeHullPx, makeHullForGlyph, type HullShape } from './glyphHulls'
 import { letterStyle } from './letterStyle'
+import { safeDestroyApp } from './lib/safeDestroyApp'
 
 // Calibration harness for hand-authoring the letter collision hulls. Renders glyphs in
 // the REAL Cherry Bomb One face with a normalized grid centred on the exact body origin
@@ -111,12 +112,15 @@ export function GlyphHullLab({
 
       const w = Math.max(1, el.clientWidth)
       const h = Math.max(1, el.clientHeight)
-      app = new PIXI.Application()
-      await app.init({ width: w, height: h, background: 0xffffff, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
+      // Adopt the app only once init() resolves. PIXI 8 throws when an Application is destroyed
+      // mid-init, so a cleanup that saw it early (an unmount during init) blanked the host page.
+      const created = new PIXI.Application()
+      await created.init({ width: w, height: h, background: 0xffffff, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
       if (cancelled) {
-        app.destroy({ removeView: true }, { children: true })
+        safeDestroyApp(created)
         return
       }
+      app = created
       app.canvas.style.cssText = 'display:block;width:100%;height:100%'
       el.appendChild(app.canvas)
 
@@ -163,7 +167,7 @@ export function GlyphHullLab({
     run().catch((e) => console.error('GlyphHullLab failed:', e))
     return () => {
       cancelled = true
-      app?.destroy({ removeView: true }, { children: true })
+      if (app) safeDestroyApp(app)
     }
   }, [glyphs, hulls])
 

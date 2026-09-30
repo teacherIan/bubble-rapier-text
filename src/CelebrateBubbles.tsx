@@ -30,6 +30,7 @@ import { GLYPH_HULLS, makeHullForGlyph, scaleHull, strokeHullPx, type HullShape,
 import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
 import { planClaims, type LetterView } from './transition'
+import { safeDestroyApp } from './lib/safeDestroyApp'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
 // bubble-letter backed by a Rapier rigid body whose collider is a HAND-AUTHORED hull of
@@ -88,23 +89,15 @@ interface RenderLetter {
   seq: number // the letter's monotonic deal order — lets styleFor vary per letter (pattern offsets)
 }
 
-// Teardown must never throw: PIXI v8's canvas-text texture pool can double-return a texture on
-// destroy (its GC may have already unloaded it while the ticker slept), which surfaces as
-// "Cannot read properties of undefined (reading 'push')" INSIDE app.destroy — and an exception in
-// a React cleanup feeds the host's error boundary, which then pointlessly rebuilds the tree the
-// user is navigating away from. The app is being discarded either way; swallow and drop the view.
-function safeDestroyApp(app: PIXI.Application): void {
+// A world whose wasm panicked cannot be freed: the panic left its raw sets mid-borrow, and free()
+// throws "attempted to take ownership of Rust value while it was borrowed". Thrown from a React
+// cleanup, that takes out the host's error boundary on the way OUT — the page dies because the
+// user navigated away from a frozen toy. The world is being discarded either way; drop it.
+function safeFreeWorld(world: CelebrateWorld): void {
   try {
-    app.destroy({ removeView: true }, { children: true })
+    world.world.free()
   } catch (err) {
-    // Known case: PIXI v8's canvas-text pool double-returns a texture. Log it —
-    // a swallowed teardown error must still be visible to whoever regresses it.
-    console.warn('[bubble-rapier-text] app.destroy threw during teardown (view dropped manually)', err)
-    try {
-      app.canvas?.remove()
-    } catch {
-      /* view already gone */
-    }
+    if (!world.dead) console.warn('[bubble-rapier-text] world.free() threw during teardown', err)
   }
 }
 
@@ -419,7 +412,7 @@ export function CelebrateBubbles({
 
       const world: CelebrateWorld = await createCelebrateWorld(specs, w, h, STUCK_DIST * fit, UNGHOST_DIST * fit)
       if (cancelled || !containerRef.current) {
-        world.world.free()
+        safeFreeWorld(world)
         safeDestroyApp(app)
         return // bail BEFORE publishing the world, so no handle outlives this freed world
       }
@@ -477,6 +470,7 @@ export function CelebrateBubbles({
       }
 
       const onPointerDown = (e: PointerEvent) => {
+        if (world.dead) return // picking reads every body — each read throws on a panicked world
         wake() // a paused ticker must resume before anything can be dragged
         const { x, y } = toWorld(e)
         const i = pickLetter(x, y)
@@ -758,6 +752,9 @@ export function CelebrateBubbles({
       // (a consumer re-passing an equal phrase as a fresh array each render must not churn). Guarding
       // on the signature, not identity, is what makes a live `phrase` prop safe.
       const syncLayout = (): void => {
+        // A panicked world stays frozen on the old word. The morph reads every body, and this runs
+        // inside the host's phrase/layout effect, so a throw here would take out its error boundary.
+        if (world.dead) return
         const nextLayout = buildLayout()
         const nextSig = nextLayout.signature(world.w)
         if (nextSig === lastSig) {
@@ -784,6 +781,10 @@ export function CelebrateBubbles({
         if (nw === world.w && nh === world.h) return // observer fires on no-op changes too
         wake()
         app.renderer.resize(nw, nh)
+        // A panicked world: repaint the frozen letters at the new canvas size (the woken ticker
+        // renders one frame, then stops on `dead`) and touch nothing else — a rebuild would read
+        // and replace bodies in the poisoned wasm.
+        if (world.dead) return
         if (world.exiting) {
           // Mid-exit the letters are falling off-screen and must keep falling. Re-homing would
           // re-damp them (retargetLetter restores the damping exitCelebrate zeroed) and a
@@ -869,8 +870,13 @@ export function CelebrateBubbles({
         window.removeEventListener('keydown', onKey)
         app.ticker.remove(ticker)
         safeDestroyApp(app)
-        world.world.free()
+        safeFreeWorld(world)
         worldRef.current = null
+        // Unpublish this build's closures. The effects above call them through these refs, and
+        // under React 19's <Activity> they run again on re-show BEFORE the next build publishes —
+        // a stale wake() then reads the destroyed app's ticker (null) and throws in that effect.
+        if (wakeRef.current === wake) wakeRef.current = null
+        if (transitionRef.current === syncLayout) transitionRef.current = null
         if (import.meta.env?.DEV) {
           delete (window as unknown as { __cb?: unknown }).__cb // don't pin the freed world
           delete (window as unknown as { __debug?: boolean }).__debug

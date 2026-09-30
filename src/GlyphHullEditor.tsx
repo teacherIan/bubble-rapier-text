@@ -3,6 +3,7 @@ import * as PIXI from 'pixi.js'
 import 'pixi.js/unsafe-eval'
 import { GLYPH_LIST, GLYPH_HULLS, GLYPH_GROUPS, EDITABLE_GLYPHS, type HullShape } from './glyphHulls'
 import { letterStyle } from './letterStyle'
+import { safeDestroyApp } from './lib/safeDestroyApp'
 
 // Interactive editor for the letter collision hulls. The glyph is rendered in the REAL
 // Cherry Bomb One face (PIXI, anchor 0.5 — identical origin to the live component), and you
@@ -250,12 +251,15 @@ export function GlyphHullEditor({
         /* fall back */
       }
       if (cancelled) return
-      app = new PIXI.Application()
-      await app.init({ width: BOX, height: BOX, backgroundAlpha: 0, antialias: true, resolution: 2, autoDensity: true })
+      // Adopt the app only once init() resolves. PIXI 8 throws when an Application is destroyed
+      // mid-init, so a cleanup that saw it early (an unmount during init) blanked the host page.
+      const created = new PIXI.Application()
+      await created.init({ width: BOX, height: BOX, backgroundAlpha: 0, antialias: true, resolution: 2, autoDensity: true })
       if (cancelled) {
-        app.destroy({ removeView: true }, { children: true })
+        safeDestroyApp(created)
         return
       }
+      app = created
       app.canvas.style.cssText = 'display:block;width:100%;height:100%'
       host.appendChild(app.canvas)
 
@@ -324,7 +328,7 @@ export function GlyphHullEditor({
       cancelled = true
       textRef.current = null
       spritesRef.current = {}
-      app?.destroy({ removeView: true }, { children: true })
+      if (app) safeDestroyApp(app)
     }
   }, [])
 
