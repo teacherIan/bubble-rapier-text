@@ -528,6 +528,48 @@ describe('resizeLetterColliders', () => {
   })
 })
 
+/** The cached mass/inertia of a letter BUILT with a single ball of radius r — what a resize to that
+ *  hull must reproduce. */
+async function freshLetter(r: number): Promise<{ mass: number; inertia: number }> {
+  const w = await createCelebrateWorld([{ ...atSlot(400, 300), colliders: [{ t: 'ball', x: 0, y: 0, r }] }], 800, 600, 60, 20)
+  const { mass, inertia } = w.letters[0]
+  w.world.free()
+  return { mass, inertia }
+}
+
+// Rapier adds a new collider's mass to its body at once but takes a removed collider's out only at
+// the next step, so a read straight after the rebuild counted the old hull and the new one together.
+// Every survivor of a morph is resized, and the slot spring scales by the cached mass.
+describe('resizeLetterColliders caches the NEW hull\'s mass, not old + new', () => {
+  it('a same-size resize leaves the cached mass and inertia unchanged', async () => {
+    const w = await settledWorld([atSlot(400, 300)]) // r=20
+    const L = w.letters[0]
+    const fresh = await freshLetter(20)
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 20 }])
+    expect(L.mass).toBeCloseTo(fresh.mass, 3)
+    expect(L.inertia).toBeCloseTo(fresh.inertia, 0)
+  })
+
+  it('a shrink caches the smaller hull', async () => {
+    const w = await settledWorld([{ ...atSlot(400, 300), colliders: [{ t: 'ball', x: 0, y: 0, r: 30 }] }])
+    const L = w.letters[0]
+    const fresh = await freshLetter(20)
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 20 }])
+    expect(L.mass).toBeCloseTo(fresh.mass, 3)
+    expect(L.inertia).toBeCloseTo(fresh.inertia, 0)
+  })
+
+  it('the body agrees after the next step (the removed hull is not taken out twice)', async () => {
+    const w = await settledWorld([{ ...atSlot(400, 300), colliders: [{ t: 'ball', x: 0, y: 0, r: 30 }] }])
+    const L = w.letters[0]
+    const fresh = await freshLetter(20)
+    resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 20 }])
+    stepCelebrate(w, DT)
+    expect(L.body.mass()).toBeCloseTo(fresh.mass, 3)
+    expect(L.body.principalInertia()).toBeCloseTo(fresh.inertia, 0)
+  })
+})
+
 describe('exit idle gate', () => {
   it('lets settledFrames accumulate once the exit letters clear the bottom', async () => {
     const w = await settledWorld([atSlot(400, 300)])
@@ -578,7 +620,9 @@ describe("resizeLetterColliders keeps the letter's collision mode", () => {
     for (let i = 0; i < L.body.numColliders(); i++) expect(L.body.collider(i).isEnabled()).toBe(false)
     expect(L.ghost).toBe(true)
     // The cached mass is the new hull's, read before the colliders were disabled.
-    expect(L.mass).toBeGreaterThan(0)
+    const fresh = await freshLetter(30)
+    expect(L.mass).toBeCloseTo(fresh.mass, 3)
+    expect(L.inertia).toBeCloseTo(fresh.inertia, 0)
   })
 
   it('a pass-through flung letter keeps colliding with nothing', async () => {

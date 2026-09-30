@@ -392,8 +392,11 @@ export function resizeLetterColliders(state: CelebrateWorld, index: number, coll
     const desc = colliderDescFor(rapier, c)
     if (desc) world.createCollider(desc.setTranslation(c.x, c.y).setRotation(shapeRot(c)).setRestitution(RESTITUTION).setDensity(1), body)
   }
-  // The springs read these cached values; a collider change doesn't refresh them. Read them
+  // The springs read these cached values; a collider change doesn't refresh them. Rapier adds a
+  // new collider's mass at once but takes a removed one's out only at the next step, so a bare
+  // read here is old hull + new hull. Recompute from the attached colliders first, and read
   // while the new colliders are still enabled — a ghost's body reports zero mass.
+  body.recomputeMassPropertiesFromColliders()
   L.mass = body.mass()
   L.inertia = body.principalInertia()
   // The new colliders are created solid; put the letter back in the mode it was in. A driven

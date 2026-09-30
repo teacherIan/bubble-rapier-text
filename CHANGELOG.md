@@ -57,6 +57,11 @@ unchanged apart from one added export, and the Rapier peer range widens rather t
   hung in the air), and `armEnclosureNow` no longer re-cages an exit that began before the cage went
   up (the component path: `exiting` already true when the build finishes, with reduced motion; the
   letters landed instead of leaving).
+- **`resizeLetterColliders` cached the old hull's mass plus the new one's** (since 0.8.3). Rapier adds
+  a new collider's mass at once but takes a removed one's out only at the next step. Every survivor
+  of a morph is resized, so each one's slot spring ran about twice as stiff (3.25× the mass and 6×
+  the inertia on an r=30 → r=20 shrink), with the damping ratio lowered to match. It now recomputes
+  the body's mass properties before caching them, on 0.19, 0.20 and 0.21.
 - `resizeLetterColliders` rebuilt a ghost's or a pass-through letter's colliders solid; the letter now
   keeps its collision mode.
 - `setWallGroups(null)` only took effect on the next cage rebuild; it now restores the default groups
