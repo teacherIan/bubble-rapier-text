@@ -723,6 +723,7 @@ export function armEnclosureNow(state: CelebrateWorld): void {
  * on the cage that is up now as well as on later rebuilds.
  */
 export function setWallGroups(state: CelebrateWorld, groups: number | null): void {
+  if (state.dead) return  // WASM is poisoned — do not touch its colliders (see stepCelebrate)
   state.wallGroups = groups
   stampWallGroups(state, groups ?? DEFAULT_GROUPS)
 }

@@ -20,6 +20,7 @@ import {
   removeObstacle,
   startBodyDrag,
   endBodyDrag,
+  setWallGroups,
   type CelebrateWorld,
   type LetterSpec,
   type MouseJoint,
@@ -49,7 +50,12 @@ interface Poisoned {
   m: MouseJoint
 }
 
-async function poisonedWorld(): Promise<Poisoned> {
+type Model = 'double free' | 'mid-step panic'
+
+// Two models of a dead world. A double free is a genuine wasm trap, but it leaves only the BODY set
+// mid-borrow. A panic inside world.step() leaves every set borrowed, so every read and write throws;
+// freeing the world reproduces that (every access then throws "null pointer passed to rust").
+async function poisonedWorld(model: Model = 'double free'): Promise<Poisoned> {
   const w = await createCelebrateWorld([atSlot(400, 300), atSlot(300, 300)], 800, 600, 60, 20)
   for (const L of w.letters) {
     L.body.setTranslation({ x: L.tx, y: L.ty }, true)
@@ -60,6 +66,12 @@ async function poisonedWorld(): Promise<Poisoned> {
   const o = addObstacle(w, 100, 100, 20)
   const prop = w.world.createRigidBody(w.rapier.RigidBodyDesc.dynamic().setTranslation(600, 100))
   const m = startBodyDrag(w, prop, 0, 0, 600, 100)
+  if (model === 'mid-step panic') {
+    w.dead = true // what stepCelebrate's catch sets
+    w.world.free()
+    expect(() => w.letters[0].body.translation(), 'precondition: every access throws').toThrow()
+    return { w, o, m }
+  }
   // Poison it the way production died — a wasm panic. A double free is a reliable trigger (see
   // WallCage.floor); the trap leaves the body set mid-borrow.
   const doomed = w.world.createRigidBody(w.rapier.RigidBodyDesc.fixed())
@@ -86,6 +98,8 @@ describe('a dead world: public mutators are no-ops', () => {
     ['resizeLetterColliders', ({ w }) => resizeLetterColliders(w, 0, [{ t: 'ball', x: 0, y: 0, r: 30 }])],
     ['removeObstacle', ({ w, o }) => removeObstacle(w, o)],
     ['endBodyDrag', ({ w, m }) => endBodyDrag(w, m)],
+    ['setWallGroups', ({ w }) => setWallGroups(w, 0x00010001)],
+    ['setWallGroups(null)', ({ w }) => setWallGroups(w, null)],
     // Already guarded before this file existed — kept so the whole contract is pinned in one place.
     ['stepCelebrate', ({ w }) => stepCelebrate(w, DT)],
     ['armEnclosureNow', ({ w }) => armEnclosureNow(w)],
@@ -100,8 +114,10 @@ describe('a dead world: public mutators are no-ops', () => {
     ['moveDrag', ({ w }) => moveDrag(w, 10, 10)],
     ['releaseDrag', ({ w }) => releaseDrag(w)],
   ]
-  it.each(cases)('%s does not touch the poisoned wasm', async (_name, call) => {
-    const p = await poisonedWorld()
+  const models: Model[] = ['double free', 'mid-step panic']
+  const matrix = models.flatMap((model) => cases.map(([name, call]) => [name, model, call] as const))
+  it.each(matrix)('%s does not touch the poisoned wasm (%s)', async (_name, model, call) => {
+    const p = await poisonedWorld(model)
     expect(() => call(p)).not.toThrow()
   })
 
