@@ -18,10 +18,6 @@ import {
   resizeWorld,
   removeWalls,
   scatterLetter,
-  addObstacle,
-  moveObstacle,
-  removeObstacle,
-  type Obstacle,
   type ObstaclePose,
   type LetterSpec,
   type CelebrateWorld,
@@ -31,6 +27,7 @@ import { letterStyle, metricStyle, SPACE_FRAC } from './letterStyle'
 import { createLineLayout, type Line, type LayoutStrategy, type Slot } from './layout'
 import { planClaims, type LetterView } from './transition'
 import { safeDestroyApp } from './lib/safeDestroyApp'
+import { createObstacleSync } from './obstacleSync'
 
 // "Celebrate your hard work" rendered as physics objects: each glyph is a Pixi
 // bubble-letter backed by a Rapier rigid body whose collider is a HAND-AUTHORED hull of
@@ -548,47 +545,17 @@ export function CelebrateBubbles({
       let announcedReady = false
       // Host obstacle mirrors, reconciled against getObstacles() by id each frame. Lives in this
       // closure so it dies with the world.
-      const obstacles = new Map<string, { o: Obstacle; lastX: number; lastY: number; lastR: number }>()
-      const obstacleIds = new Set<string>()
+      const obstacleSync = createObstacleSync(world, OBSTACLE_WAKE_PX)
       // Pull the host's foreign-body poses and re-state them as kinematic mirrors. Returns whether
       // any mirror MOVED (per OBSTACLE_WAKE_PX hysteresis) — that is this frame's `busy`.
       const syncObstacles = (): boolean => {
         const getter = getObstaclesRef.current
         if (!getter) return false // no obstacle feature at all — nothing to reconcile
         // A PRESENT getter that returns undefined ("paused" / "no data yet") means
-        // zero obstacles NOW — fall through to the cleanup below so mirrors added
-        // while poses were present don't orphan in the world forever.
+        // zero obstacles NOW — sync removes mirrors added while poses were present,
+        // so they don't orphan in the world forever.
         const poses = getter() ?? []
-        let moved = false
-        obstacleIds.clear()
-        for (const p of poses) {
-          obstacleIds.add(p.id)
-          const e = obstacles.get(p.id)
-          if (!e) {
-            // Born at its first known pose — never parked at (0,0) waiting for data.
-            obstacles.set(p.id, { o: addObstacle(world, p.x, p.y, p.r), lastX: p.x, lastY: p.y, lastR: p.r })
-            continue
-          }
-          moveObstacle(e.o, p.x, p.y, p.r)
-          if (
-            Math.abs(p.x - e.lastX) > OBSTACLE_WAKE_PX ||
-            Math.abs(p.y - e.lastY) > OBSTACLE_WAKE_PX ||
-            Math.abs(p.r - e.lastR) > OBSTACLE_WAKE_PX
-          ) {
-            e.lastX = p.x
-            e.lastY = p.y
-            e.lastR = p.r
-            moved = true
-          }
-        }
-        if (obstacles.size > obstacleIds.size) {
-          for (const [id, e] of obstacles) {
-            if (!obstacleIds.has(id)) {
-              removeObstacle(world, e.o)
-              obstacles.delete(id)
-            }
-          }
-        }
+        let moved = obstacleSync.sync(poses)
         // A mirror RESTING on a letter's SLOT also counts as busy. With the
         // untangle armed, a letter whose home is occupied is read as wedged,
         // ghost-driven THROUGH the mirror, re-solidified inside it, and ejected

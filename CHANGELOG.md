@@ -57,6 +57,10 @@ unchanged apart from one added export, and the Rapier peer range widens rather t
   hung in the air), and `armEnclosureNow` no longer re-cages an exit that began before the cage went
   up (the component path: `exiting` already true when the build finishes, with reduced motion; the
   letters landed instead of leaving).
+- **`<CelebrateBubbles>`: a `getObstacles` mirror whose first pose was not finite never counted as
+  moving.** Its last-counted pose was seeded with NaN, and a NaN difference is never over the wake
+  threshold, so once placed it collided but never set `busy`: letters it pushed were read as wedged
+  and ghost-driven through it. Its first finite pose (or radius) now counts as a move.
 - **`resizeLetterColliders` cached the old hull's mass plus the new one's** (since 0.8.3). Rapier adds
   a new collider's mass at once but takes a removed one's out only at the next step. Every survivor
   of a morph is resized, so each one's slot spring ran about twice as stiff (3.25× the mass and 6×
